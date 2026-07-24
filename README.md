@@ -1,14 +1,10 @@
 # BackDatabase
 
-从 `D:\code\backmysql`（Go）移植的 .NET 版数据库定时备份工具。
-
 通过调用本机 `mysqldump` / `pg_dump`，按 `config/*.conf` 定时导出 SQL，并自动清理超出数量的旧备份。
 
 ## 依赖
-
-- .NET 10 运行时/SDK（项目目标框架 `net10.0`）
 - MySQL/MariaDB：安装客户端并保证 **`mysqldump` 在 PATH**
-- PostgreSQL：安装客户端并保证 **`pg_dump` 在 PATH**
+- PostgreSQL：安装客户端并保证 **`pg_dump` 在 PATH** （也就是环境变量）
 
 Ubuntu/Debian：
 
