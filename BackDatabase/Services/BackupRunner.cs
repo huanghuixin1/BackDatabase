@@ -179,14 +179,22 @@ public sealed class BackupRunner
         }
     }
 
-    /// <summary>备份最终失败时发 HxPush 通知（未配置推送则跳过）。</summary>
+    /// <summary>备份最终失败时发 HxPush 通知（未配置推送则跳过并打日志）。</summary>
     private void NotifyFailure(
         BackupConfig config,
         string database,
         string reason,
         CancellationToken cancellationToken)
     {
-        _pushNotifier?.NotifyBackupFailure(config, database, reason, cancellationToken);
+        Console.WriteLine(
+            $"[备份失败待推送] conf={Path.GetFileName(config.SourceFile)} db={database} reason={reason}");
+        if (_pushNotifier is null)
+        {
+            Console.WriteLine("[推送跳过] BackupRunner 未注入 PushNotifier");
+            return;
+        }
+
+        _pushNotifier.NotifyBackupFailure(config, database, reason, cancellationToken);
     }
 
     /// <summary>

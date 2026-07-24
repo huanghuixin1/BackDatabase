@@ -6,16 +6,10 @@ namespace BackDatabase.Utils;
 /// <summary>
 /// 读取程序根目录下的 env.conf（JSON），映射为 <see cref="EnvConfig"/>。
 /// 文件不存在或解析失败时返回默认空配置（推送关闭），不阻断启动。
+/// 使用 <see cref="AppJsonContext"/> 源生成，兼容 PublishTrimmed。
 /// </summary>
 public static class EnvConfigLoader
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        ReadCommentHandling = JsonCommentHandling.Skip,
-        AllowTrailingCommas = true,
-    };
-
     /// <summary>
     /// 从 baseDir/env.conf 加载环境配置。
     /// </summary>
@@ -31,16 +25,27 @@ public static class EnvConfigLoader
 
         try
         {
+            // 去掉 // 与 /* */ 注释、以及行尾无引号内的说明，保持简单：只读标准 JSON。
+            // 若需要注释，可用 env 中纯 JSON；样例文件本身无注释。
             var json = File.ReadAllText(path);
-            var env = JsonSerializer.Deserialize<EnvConfig>(json, JsonOptions) ?? new EnvConfig();
+
+            // 裁剪发布下禁止反射反序列化，必须走源生成 TypeInfo
+            var env = JsonSerializer.Deserialize(json, AppJsonContext.Default.EnvConfig) ?? new EnvConfig();
             env.PushAddr = (env.PushAddr ?? "").Trim();
             env.PushKey = (env.PushKey ?? "").Trim();
             env.PushHwid = (env.PushHwid ?? "").Trim();
 
             if (env.IsPushEnabled)
-                Console.WriteLine($"已加载 env.conf：消息推送已启用 -> {env.PushAddr}");
+            {
+                var hwid = string.IsNullOrWhiteSpace(env.PushHwid) ? "(空，将用机器名)" : env.PushHwid;
+                Console.WriteLine($"已加载 env.conf：消息推送已启用 -> {env.PushAddr}, pushHwid={hwid}");
+            }
             else
-                Console.WriteLine("已加载 env.conf：pushAddr/pushKey 未配全，消息推送未启用。");
+            {
+                Console.WriteLine(
+                    $"已加载 env.conf，但推送未启用：pushAddr={(string.IsNullOrWhiteSpace(env.PushAddr) ? "空" : "已填")}, " +
+                    $"pushKey={(string.IsNullOrWhiteSpace(env.PushKey) ? "空" : "已填")}");
+            }
 
             return env;
         }

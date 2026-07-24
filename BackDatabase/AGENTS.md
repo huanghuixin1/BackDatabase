@@ -140,8 +140,13 @@ conf.dbType
 - **风格**：与现有文件一致——小而清晰的 sealed 类、显式中文日志、少依赖。
 - **依赖**：尽量少第三方。当前：
   - `System.Text.Encoding.CodePages`（GBK 解码 mysqldump 错误）
-  - 项目引用 `HxPushSdk`（备份失败推送）
+  - 程序集引用 `HxPushSdk` / `HxPushModel`（备份失败推送）
   新增 NuGet 需有明确理由。
+- **JSON / 裁剪安全（强制）**：
+  - 所有会序列化的类型登记在 `Utils/AppJsonContext.cs`（`[JsonSerializable]`）。
+  - 本项目业务代码只用 `JsonSerializer.*(…, AppJsonContext.Default.Xxx)` 或注入 `AppJsonContext.CreateOptions()`。
+  - 工程已启用 `EnableTrimAnalyzer` + `WarningsAsErrors=IL2026;IL3050`：**普通 `dotnet build` 就会把反射 JSON 标成错误**。
+  - 第三方 DLL 内部若仍用反射序列化，分析器不一定能报（取决于是否带注解）；要彻底安全需改 SDK 或不用裁剪。
 - **安全**：
   - 不要把真实密码 / pushKey 写进仓库、样例 conf、日志。
   - `env.conf`、`config/*.conf` 已在 `.gitignore`；只提交 `*.example`。

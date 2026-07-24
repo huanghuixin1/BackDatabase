@@ -1,4 +1,5 @@
 using BackDatabase.Config;
+using BackDatabase.Utils;
 using HxPushApp.models.Message;
 using HxPushSdk;
 
@@ -11,8 +12,10 @@ namespace BackDatabase.Services;
 public sealed class PushNotifier : IDisposable
 {
     private readonly EnvConfig _env;
+    private readonly HttpClient? _httpClient;
     private readonly HxPushWebApiClient? _client;
     private readonly string _hwid;
+    private readonly string _disableReason;
 
     public PushNotifier(EnvConfig env)
     {
@@ -22,18 +25,34 @@ public sealed class PushNotifier : IDisposable
         if (!_env.IsPushEnabled)
         {
             _client = null;
+            _httpClient = null;
+            _disableReason = string.IsNullOrWhiteSpace(_env.PushAddr) && string.IsNullOrWhiteSpace(_env.PushKey)
+                ? "未配置 pushAddr/pushKey（请在 exe 同目录放置 env.conf）"
+                : string.IsNullOrWhiteSpace(_env.PushAddr)
+                    ? "pushAddr 为空"
+                    : "pushKey 为空";
+            Console.WriteLine($"消息推送未启用: {_disableReason}");
             return;
         }
 
         try
         {
-            // 字符串构造：SDK 自持 HttpClient，Dispose 时释放
-            _client = new HxPushWebApiClient(_env.PushAddr);
+            // 使用源生成 JsonSerializerOptions，裁剪后仍可序列化 HxPush 消息
+            _httpClient = new HttpClient();
+            var baseUri = new Uri(_env.PushAddr.TrimEnd('/') + "/", UriKind.Absolute);
+            _client = new HxPushWebApiClient(_httpClient, baseUri, AppJsonContext.CreateOptions());
+            _disableReason = "";
+            Console.WriteLine(
+                $"消息推送已初始化: addr={_client.BaseAddress}, appKey={MaskKey(_env.PushKey)}, hwid={_hwid}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"初始化 HxPush 客户端失败，推送禁用: {ex.Message}");
             _client = null;
+            _httpClient?.Dispose();
+            _httpClient = null;
+            _disableReason = $"初始化 HxPush 客户端失败: {ex.Message}";
+            Console.WriteLine($"{_disableReason}");
+            Console.WriteLine(ex.ToString());
         }
     }
 
@@ -49,14 +68,23 @@ public sealed class PushNotifier : IDisposable
         string reason,
         CancellationToken cancellationToken = default)
     {
+        var confName = Path.GetFileName(config.SourceFile);
+
         if (!IsEnabled || _client is null)
+        {
+            // 关键：以前这里直接 return，用户看不到“为什么没推送”
+            Console.WriteLine(
+                $"[推送跳过] 备份失败未推送。原因={_disableReason}；配置={confName}；库={database}；错误={Truncate(reason, 200)}");
             return;
+        }
 
         // 取消时不再发推送
         if (cancellationToken.IsCancellationRequested)
+        {
+            Console.WriteLine($"[推送跳过] 程序正在退出，取消推送。配置={confName}；库={database}");
             return;
+        }
 
-        var confName = Path.GetFileName(config.SourceFile);
         var msg =
             $"[BackDatabase] 备份失败\n" +
             $"时间(UTC): {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}\n" +
@@ -64,7 +92,10 @@ public sealed class PushNotifier : IDisposable
             $"类型: {config.DbType}\n" +
             $"主机: {config.Host}:{config.Port}\n" +
             $"数据库: {database}\n" +
+            $"Hwid: {_hwid}\n" +
             $"原因: {Truncate(reason, 800)}";
+
+        Console.WriteLine($"[推送中] 正在发送备份失败通知 -> {_client.BaseAddress} appKey={MaskKey(_env.PushKey)} hwid={_hwid}");
 
         try
         {
@@ -79,22 +110,40 @@ public sealed class PushNotifier : IDisposable
             };
 
             var ret = _client.SendMessageAsync(message, cancellationToken).GetAwaiter().GetResult();
-            Console.WriteLine($"备份失败推送已发送: code={ret.code}, msg={ret.msg}");
+            Console.WriteLine($"[推送成功] code={ret.code}, msg={ret.msg}, otherData={ret.otherData}");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // 程序退出过程中取消推送，正常
+            Console.WriteLine("[推送取消] 程序退出过程中取消推送");
+        }
+        catch (HxPushHttpException ex)
+        {
+            // HTTP 层：404/500、连不上等
+            Console.WriteLine(
+                $"[推送失败-HTTP] status={(int)ex.StatusCode} ({ex.StatusCode}), body={Truncate(ex.ResponseBody, 500)}");
+            Console.WriteLine(ex.ToString());
+        }
+        catch (HxPushApiException ex)
+        {
+            // 业务层：AppKey 不存在、参数不合法等
+            Console.WriteLine($"[推送失败-API] code={ex.Code}, msg={ex.Message}");
+            Console.WriteLine(ex.ToString());
         }
         catch (Exception ex)
         {
-            // 推送失败不影响备份重试/调度
-            Console.WriteLine($"备份失败推送异常: {ex.Message}");
+            // 网络超时、DNS、连接被拒等
+            Console.WriteLine($"[推送失败] {ex.GetType().Name}: {ex.Message}");
+            if (ex.InnerException is not null)
+                Console.WriteLine($"[推送失败-内部] {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+            Console.WriteLine(ex.ToString());
         }
     }
 
     public void Dispose()
     {
+        // 注入的 HttpClient 由我们持有；SDK 在注入模式下不会 Dispose 它
         _client?.Dispose();
+        _httpClient?.Dispose();
     }
 
     /// <summary>
@@ -117,6 +166,16 @@ public sealed class PushNotifier : IDisposable
         }
 
         return "BackDatabase";
+    }
+
+    /// <summary>日志里脱敏 AppKey，避免整串密钥落盘。</summary>
+    private static string MaskKey(string key)
+    {
+        if (string.IsNullOrEmpty(key))
+            return "(empty)";
+        if (key.Length <= 4)
+            return "****";
+        return key[..2] + "****" + key[^2..];
     }
 
     private static string Truncate(string text, int maxLen)

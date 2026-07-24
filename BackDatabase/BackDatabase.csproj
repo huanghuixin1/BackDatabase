@@ -15,11 +15,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 彗星推送 SDK：备份失败时发消息 -->
-    <ProjectReference Include="..\..\HxPush\HxPushSdk\HxPushSdk.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
     <!-- 运行时扫描可执行文件旁的 config/*.conf；样例一并复制到输出目录 -->
     <None Update="config\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -35,6 +30,15 @@
 
   <ItemGroup>
     <Folder Include="utils\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="HxPushModel">
+      <HintPath>..\..\HxPush\HxPushSdk\bin\Release\net8.0\HxPushModel.dll</HintPath>
+    </Reference>
+    <Reference Include="HxPushSdk">
+      <HintPath>..\..\HxPush\HxPushSdk\bin\Release\net8.0\HxPushSdk.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
 </Project>
