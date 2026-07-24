@@ -35,8 +35,13 @@ public sealed class BackupRunner
     /// 可选：只备份指定库（重试单个库时使用）；
     /// 为 null 时备份 conf 中配置的全部 dbs。
     /// </param>
-    public void Run(BackupConfig config, IReadOnlyList<string>? onlyDatabases = null)
+    public void Run(
+        BackupConfig config,
+        IReadOnlyList<string>? onlyDatabases = null,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         var saveDir = config.ResolveSaveDir(_baseDir);
         Directory.CreateDirectory(saveDir);
 
@@ -53,7 +58,8 @@ public sealed class BackupRunner
         // 逐个数据库备份（与 Go 版 for _, db := range dbs 一致）
         foreach (var db in dbs)
         {
-            BackupOneDatabase(config, saveDir, db);
+            cancellationToken.ThrowIfCancellationRequested();
+            BackupOneDatabase(config, saveDir, db, cancellationToken);
         }
     }
 
@@ -61,8 +67,15 @@ public sealed class BackupRunner
     /// 备份单个数据库：策略拼命令 → 启动进程 → 失败重试。
     /// </summary>
     /// <param name="isRetry">是否已是重试；true 时失败不再递归重试，防止死循环</param>
-    private void BackupOneDatabase(BackupConfig config, string saveDir, string db, bool isRetry = false)
+    private void BackupOneDatabase(
+        BackupConfig config,
+        string saveDir,
+        string db,
+        CancellationToken cancellationToken,
+        bool isRetry = false)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         // 文件名格式对齐 Go：{库名}_{UTC时间}.sql，时间里用点代替冒号，避免 Windows 路径非法字符
         var stamp = DateTime.UtcNow.ToString("yyyy-MM-dd__HH.mm.ss");
         var sqlPath = Path.Combine(saveDir, $"{db}_{stamp}.sql");
@@ -96,7 +109,8 @@ public sealed class BackupRunner
                 command.FileName,
                 command.Arguments,
                 command.ExtraEnvironment,
-                redirectPath);
+                redirectPath,
+                cancellationToken);
 
             if (exitCode != 0)
             {
@@ -111,13 +125,22 @@ public sealed class BackupRunner
                 if (!isRetry)
                 {
                     Console.WriteLine("重新执行一次备份");
-                    BackupOneDatabase(config, saveDir, db, isRetry: true);
+                    BackupOneDatabase(config, saveDir, db, cancellationToken, isRetry: true);
                 }
             }
             else
             {
                 Console.WriteLine($"数据库 {db} 备份完毕 -> {sqlPath}");
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // 中断时不重试；子进程释放文件句柄后删除当前残缺备份。
+            var deleted = TryDelete(sqlPath);
+            Console.WriteLine(deleted
+                ? $"数据库 {db} 备份已中断，已删除残缺文件: {sqlPath}"
+                : $"数据库 {db} 备份已中断，但残缺文件删除失败: {sqlPath}");
+            throw;
         }
         catch (Exception ex)
         {
@@ -127,7 +150,7 @@ public sealed class BackupRunner
             if (!isRetry)
             {
                 Console.WriteLine("重新执行一次备份");
-                BackupOneDatabase(config, saveDir, db, isRetry: true);
+                BackupOneDatabase(config, saveDir, db, cancellationToken, isRetry: true);
             }
         }
     }
@@ -146,8 +169,11 @@ public sealed class BackupRunner
         string fileName,
         IReadOnlyList<string> args,
         IReadOnlyDictionary<string, string>? extraEnv,
-        string? redirectStdoutTo)
+        string? redirectStdoutTo,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         var psi = new ProcessStartInfo
         {
             FileName = fileName,
@@ -193,21 +219,63 @@ public sealed class BackupRunner
         if (!process.Start())
             throw new InvalidOperationException($"无法启动进程: {fileName}");
 
+        // Ctrl+C 时终止整个 dump 进程树，避免客户端继续写入半成品文件。
+        using var cancellationRegistration = cancellationToken.Register(() => TryKill(process));
+
         process.BeginErrorReadLine();
 
+        Task? stdoutCopyTask = null;
+        FileStream? outputFile = null;
         if (redirectStdoutTo is not null)
         {
             // 同步把 stdout 字节流拷到 .sql 文件（保留原始 SQL 内容，不做二次编码转换）
-            using var fs = new FileStream(redirectStdoutTo, FileMode.Create, FileAccess.Write, FileShare.Read);
-            process.StandardOutput.BaseStream.CopyTo(fs);
+            outputFile = new FileStream(redirectStdoutTo, FileMode.Create, FileAccess.Write, FileShare.Read);
+            stdoutCopyTask = process.StandardOutput.BaseStream.CopyToAsync(outputFile, cancellationToken);
         }
         else
         {
             process.BeginOutputReadLine();
         }
 
-        process.WaitForExit();
-        return (process.ExitCode, stdout.ToString(), stderr.ToString());
+        try
+        {
+            process.WaitForExitAsync(cancellationToken).GetAwaiter().GetResult();
+            stdoutCopyTask?.GetAwaiter().GetResult();
+            process.WaitForExit(); // 确保异步输出事件已经全部处理完毕。
+            return (process.ExitCode, stdout.ToString(), stderr.ToString());
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            TryKill(process);
+            process.WaitForExit();
+            try
+            {
+                stdoutCopyTask?.GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException)
+            {
+                // 复制任务使用同一个取消令牌，取消属于预期结果。
+            }
+            throw;
+        }
+        finally
+        {
+            outputFile?.Dispose();
+        }
+    }
+
+    /// <summary>尽力终止备份工具及其子进程；进程可能已自行退出。</summary>
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+            // 取消清理属于尽力操作，退出竞态或权限问题不覆盖原始异常。
+        }
     }
 
     /// <summary>
@@ -245,16 +313,19 @@ public sealed class BackupRunner
     }
 
     /// <summary>尽力删除文件，忽略任何异常（用于清理失败产生的残缺 sql）</summary>
-    private static void TryDelete(string path)
+    private static bool TryDelete(string path)
     {
         try
         {
             if (File.Exists(path))
                 File.Delete(path);
+
+            return true;
         }
-        catch
+        catch (Exception ex)
         {
-            // 忽略：清理失败不应中断主流程
+            Console.WriteLine($"删除残缺备份失败 {path}: {ex.Message}");
+            return false;
         }
     }
 

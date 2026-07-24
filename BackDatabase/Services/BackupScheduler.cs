@@ -78,7 +78,11 @@ public sealed class BackupScheduler
             {
                 try
                 {
-                    _runner.Run(config);
+                    _runner.Run(config, cancellationToken: ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    break;
                 }
                 catch (Exception ex)
                 {
@@ -113,7 +117,11 @@ public sealed class BackupScheduler
                     lastRunDate = today;
                     try
                     {
-                        _runner.Run(config);
+                        _runner.Run(config, cancellationToken: ct);
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        break;
                     }
                     catch (Exception ex)
                     {
