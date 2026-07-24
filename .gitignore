@@ -47,6 +47,10 @@ appsettings.Local.json
 .env
 .env.*
 !.env.example
+env.conf
+**/env.conf
+!env.conf.example
+!**/env.conf.example
 secrets.json
 *.pfx
 *.p12

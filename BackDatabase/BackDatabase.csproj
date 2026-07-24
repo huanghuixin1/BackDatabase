@@ -15,10 +15,26 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- 彗星推送 SDK：备份失败时发消息 -->
+    <ProjectReference Include="..\..\HxPush\HxPushSdk\HxPushSdk.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- 运行时扫描可执行文件旁的 config/*.conf；样例一并复制到输出目录 -->
     <None Update="config\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- 全局 env.conf 样例（运行时读 env.conf，不读 example） -->
+    <None Update="env.conf.example">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="env.conf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="utils\" />
   </ItemGroup>
 
 </Project>

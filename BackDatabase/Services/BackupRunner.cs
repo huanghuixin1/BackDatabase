@@ -20,11 +20,18 @@ public sealed class BackupRunner
     /// <summary>按 dbType 解析具体数据库备份策略</summary>
     private readonly DatabaseBackupStrategyFactory _strategyFactory;
 
-    public BackupRunner(string baseDir, DatabaseBackupStrategyFactory? strategyFactory = null)
+    /// <summary>备份失败时可选推送（env.conf 未配置则为空操作）</summary>
+    private readonly PushNotifier? _pushNotifier;
+
+    public BackupRunner(
+        string baseDir,
+        DatabaseBackupStrategyFactory? strategyFactory = null,
+        PushNotifier? pushNotifier = null)
     {
         _baseDir = baseDir;
         // 未注入时使用内置 MySQL / PostgreSQL 策略
         _strategyFactory = strategyFactory ?? DatabaseBackupStrategyFactory.CreateDefault();
+        _pushNotifier = pushNotifier;
     }
 
     /// <summary>
@@ -84,8 +91,11 @@ public sealed class BackupRunner
         var strategy = _strategyFactory.Resolve(config.DbType);
         if (strategy is null)
         {
-            Console.WriteLine(
-                $"不支持的数据库类型: {config.DbType}。已注册: {string.Join(", ", _strategyFactory.RegisteredDbTypes)}");
+            var reason =
+                $"不支持的数据库类型: {config.DbType}。已注册: {string.Join(", ", _strategyFactory.RegisteredDbTypes)}";
+            Console.WriteLine(reason);
+            // 配置错误无法靠重试解决，直接推送
+            NotifyFailure(config, db, reason, cancellationToken);
             return;
         }
 
@@ -96,7 +106,9 @@ public sealed class BackupRunner
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"构建备份命令失败 ({config.DbType}/{db}): {ex.Message}");
+            var reason = $"构建备份命令失败 ({config.DbType}/{db}): {ex.Message}";
+            Console.WriteLine(reason);
+            NotifyFailure(config, db, reason, cancellationToken);
             return;
         }
 
@@ -127,6 +139,14 @@ public sealed class BackupRunner
                     Console.WriteLine("重新执行一次备份");
                     BackupOneDatabase(config, saveDir, db, cancellationToken, isRetry: true);
                 }
+                else
+                {
+                    // 重试仍失败再推送，避免首次瞬时失败刷屏
+                    var reason = $"exit={exitCode}; {chinese}";
+                    if (string.IsNullOrWhiteSpace(chinese))
+                        reason = $"exit={exitCode}; {combined}";
+                    NotifyFailure(config, db, reason, cancellationToken);
+                }
             }
             else
             {
@@ -135,7 +155,7 @@ public sealed class BackupRunner
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // 中断时不重试；子进程释放文件句柄后删除当前残缺备份。
+            // 中断时不重试、不推送；子进程释放文件句柄后删除当前残缺备份。
             var deleted = TryDelete(sqlPath);
             Console.WriteLine(deleted
                 ? $"数据库 {db} 备份已中断，已删除残缺文件: {sqlPath}"
@@ -152,7 +172,21 @@ public sealed class BackupRunner
                 Console.WriteLine("重新执行一次备份");
                 BackupOneDatabase(config, saveDir, db, cancellationToken, isRetry: true);
             }
+            else
+            {
+                NotifyFailure(config, db, ex.Message, cancellationToken);
+            }
         }
+    }
+
+    /// <summary>备份最终失败时发 HxPush 通知（未配置推送则跳过）。</summary>
+    private void NotifyFailure(
+        BackupConfig config,
+        string database,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        _pushNotifier?.NotifyBackupFailure(config, database, reason, cancellationToken);
     }
 
     /// <summary>
