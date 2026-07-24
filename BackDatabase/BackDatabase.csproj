@@ -8,6 +8,20 @@
     <RootNamespace>BackDatabase</RootNamespace>
     <AssemblyName>BackDatabase</AssemblyName>
     <Version>3.1.0</Version>
+
+    <!--
+      半裁剪策略（体积 vs 第三方反射 JSON 的中间方案）：
+      1. PublishTrimmed 由发布配置打开时生效；
+      2. 允许 STJ 反射序列化（第三方 HxPushSdk 内部仍用反射 API）；
+      3. 对 HxPush* 程序集做 TrimmerRoot，避免类型/属性被裁掉；
+      4. 本项目业务 JSON 仍优先走 AppJsonContext 源生成。
+    -->
+    <TrimMode>partial</TrimMode>
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+
+    <!-- 分析器：本项目若误用反射泛型 API 仍会在编译期提示；不设为错误，避免第三方注解噪音 -->
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,6 +40,12 @@
     <None Update="env.conf">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+  </ItemGroup>
+
+  <!-- 裁剪时整库保留推送 SDK，内部反射序列化才能扫到元数据 -->
+  <ItemGroup>
+    <TrimmerRootAssembly Include="HxPushSdk" />
+    <TrimmerRootAssembly Include="HxPushModel" />
   </ItemGroup>
 
   <ItemGroup>

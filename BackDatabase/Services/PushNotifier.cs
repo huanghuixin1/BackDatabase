@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using BackDatabase.Config;
 using BackDatabase.Utils;
 using HxPushApp.models.Message;
@@ -17,6 +18,14 @@ public sealed class PushNotifier : IDisposable
     private readonly string _hwid;
     private readonly string _disableReason;
 
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026",
+        Justification = "半裁剪：CreateOptions 含反射回退；HxPush* 已 TrimmerRoot，且 JsonSerializerIsReflectionEnabledByDefault=true。")]
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "非 NativeAOT；self-contained 裁剪场景下允许反射 JSON 回退。")]
     public PushNotifier(EnvConfig env)
     {
         _env = env ?? new EnvConfig();
@@ -37,7 +46,7 @@ public sealed class PushNotifier : IDisposable
 
         try
         {
-            // 使用源生成 JsonSerializerOptions，裁剪后仍可序列化 HxPush 消息
+            // 半裁剪：源生成 + 反射回退的 Options，兼容 HxPushSdk 内部反射序列化
             _httpClient = new HttpClient();
             var baseUri = new Uri(_env.PushAddr.TrimEnd('/') + "/", UriKind.Absolute);
             _client = new HxPushWebApiClient(_httpClient, baseUri, AppJsonContext.CreateOptions());

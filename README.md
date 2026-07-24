@@ -62,6 +62,16 @@ BackDatabase/
 
 依赖本机旁的 `HxPushSdk` 工程（`D:\code\HxPush\HxPushSdk`）。
 
+### 裁剪发布说明（半裁剪）
+
+勾选「裁剪未使用的代码」时工程已按中间方案配置：
+
+- `TrimMode=partial` + `JsonSerializerIsReflectionEnabledByDefault=true`：体积缩小，仍允许反射 JSON  
+- `TrimmerRootAssembly`：`HxPushSdk` / `HxPushModel` 元数据保留  
+- 本项目 `env.conf` 走源生成；推送 SDK 注入「源生成 + 反射回退」的 `JsonSerializerOptions`
+
+重新发布后请把 `env.conf` 放到 **发布目录**（不是源码目录）。
+
 ## 配置（兼容原 Go 版）
 
 | 键 | 说明 |

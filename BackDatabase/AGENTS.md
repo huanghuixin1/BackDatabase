@@ -142,11 +142,17 @@ conf.dbType
   - `System.Text.Encoding.CodePages`（GBK 解码 mysqldump 错误）
   - 程序集引用 `HxPushSdk` / `HxPushModel`（备份失败推送）
   新增 NuGet 需有明确理由。
-- **JSON / 裁剪安全（强制）**：
-  - 所有会序列化的类型登记在 `Utils/AppJsonContext.cs`（`[JsonSerializable]`）。
-  - 本项目业务代码只用 `JsonSerializer.*(…, AppJsonContext.Default.Xxx)` 或注入 `AppJsonContext.CreateOptions()`。
-  - 工程已启用 `EnableTrimAnalyzer` + `WarningsAsErrors=IL2026;IL3050`：**普通 `dotnet build` 就会把反射 JSON 标成错误**。
-  - 第三方 DLL 内部若仍用反射序列化，分析器不一定能报（取决于是否带注解）；要彻底安全需改 SDK 或不用裁剪。
+- **JSON / 半裁剪策略（强制约定）**：
+  - **目标**：发布体积小（`PublishTrimmed`）+ 第三方 DLL 仍可反射序列化。
+  - csproj 关键项：
+    - `TrimMode=partial`
+    - `JsonSerializerIsReflectionEnabledByDefault=true`（裁剪后仍允许 STJ 反射）
+    - `TrimmerRootAssembly`：`HxPushSdk`、`HxPushModel`（整库不裁元数据）
+  - 本项目已知类型登记在 `Utils/AppJsonContext.cs`；`EnvConfig` 用源生成 API。
+  - 注入 SDK 的 Options 用 `AppJsonContext.CreateOptions()`（源生成 + `DefaultJsonTypeInfoResolver` 回退）。
+  - 分析器 `EnableTrimAnalyzer` 开启；`CreateOptions`/PushNotifier 上对预期反射路径有 suppress。
+  - **不要**为了“更小”关掉 `JsonSerializerIsReflectionEnabledByDefault` 或去掉 TrimmerRoot，否则 HxPush 会再炸。
+  - 若彻底改掉第三方反射，可再收紧为纯源生成并去掉反射回退。
 - **安全**：
   - 不要把真实密码 / pushKey 写进仓库、样例 conf、日志。
   - `env.conf`、`config/*.conf` 已在 `.gitignore`；只提交 `*.example`。

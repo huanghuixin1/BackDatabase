@@ -1,19 +1,19 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using BackDatabase.Config;
-using HxPushApp.models.Message;
-using HxPushModel.HttpRequest;
 
 namespace BackDatabase.Utils;
 
 /// <summary>
-/// System.Text.Json 源生成上下文。
-/// 裁剪（PublishTrimmed）后禁用反射序列化，所有会被 Serialize/Deserialize 的类型都必须登记在此。
+/// System.Text.Json 源生成上下文 + 半裁剪兼容的 Options 工厂。
 /// <para>
-/// 编译期防护约定：
-/// 1. 业务代码优先 <c>JsonSerializer.Deserialize(json, AppJsonContext.Default.Xxx)</c>；
-/// 2. 不要写 <c>JsonSerializer.Deserialize&lt;T&gt;(json)</c> 反射泛型重载；
-/// 3. 项目已开 <c>EnableTrimAnalyzer</c>，并把 IL2026/IL3050 当错误——漏用反射会直接编不过。
+/// 策略：
+/// - 本项目已知类型优先走源生成（编译期安全、更快）；
+/// - 通过 <see cref="JsonTypeInfoResolver.Combine"/> 回退到 <see cref="DefaultJsonTypeInfoResolver"/>，
+///   配合 csproj 的 <c>JsonSerializerIsReflectionEnabledByDefault=true</c> 与 TrimmerRoot，
+///   第三方 DLL 内部反射序列化也能工作。
 /// </para>
 /// </summary>
 [JsonSourceGenerationOptions(
@@ -22,26 +22,33 @@ namespace BackDatabase.Utils;
     WriteIndented = false)]
 // 本地配置
 [JsonSerializable(typeof(EnvConfig))]
-// HxPush 发送消息 / 响应 envelope
-[JsonSerializable(typeof(HxPushMsgModel))]
-[JsonSerializable(typeof(HxHttpResModel))]
-// SDK 内部可能对列表/字典再序列化
-[JsonSerializable(typeof(List<HxPushMsgModel>))]
+// HxPush 发送消息 / 响应 envelope（本项目侧也会直接用到）
 [JsonSerializable(typeof(Dictionary<string, string?>))]
-// HxHttpResModel.msg 为 object，裁剪下用 JsonElement 承接动态 JSON
 [JsonSerializable(typeof(JsonElement))]
 internal partial class AppJsonContext : JsonSerializerContext
 {
     /// <summary>
-    /// 供 HxPushWebApiClient 使用的 Options：TypeInfoResolver 指向本源生成上下文，避免反射。
+    /// 供 HxPushWebApiClient 等第三方代码使用的 Options：
+    /// 源生成优先，未登记类型回退反射（需 Publish 时开启反射 + root 第三方程序集）。
     /// </summary>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026",
+        Justification = "半裁剪有意保留反射回退；HxPush* 已 TrimmerRoot，且 JsonSerializerIsReflectionEnabledByDefault=true。")]
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "非 NativeAOT；self-contained 裁剪场景下允许反射 JSON 回退。")]
     public static JsonSerializerOptions CreateOptions()
     {
         return new JsonSerializerOptions(JsonSerializerDefaults.Web)
         {
             PropertyNameCaseInsensitive = true,
             AllowTrailingCommas = true,
-            TypeInfoResolver = Default,
+            // 顺序：先源生成，再反射；SDK 里 Serialize(object) 也能落到反射 resolver
+            TypeInfoResolver = JsonTypeInfoResolver.Combine(
+                Default,
+                new DefaultJsonTypeInfoResolver()),
         };
     }
 }
