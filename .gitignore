@@ -1,0 +1,90 @@
+# .NET build and publish outputs
+**/bin/
+**/obj/
+**/publish/
+artifacts/
+.claude
+.agents
+
+# Visual Studio / VS Code / JetBrains user state
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.rsuser
+*.DotSettings.user
+
+# Build, test and analysis results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+TestResults/
+coverage/
+coverage.*
+*.coverage
+*.coveragexml
+*.trx
+BenchmarkDotNet.Artifacts/
+
+# NuGet packages and generated files
+*.nupkg
+*.snupkg
+packages/
+*.nuget.props
+*.nuget.targets
+
+# Local configuration and secrets
+appsettings.*.local.json
+appsettings.Local.json
+.env
+.env.*
+!.env.example
+secrets.json
+*.pfx
+*.p12
+*.key
+
+# Real database connection configuration; keep templates in Git
+**/config/*.conf
+**/Config/*.conf
+!**/config/*.conf.example
+!**/Config/*.conf.example
+
+# Database backup files and archives
+*.sql
+*.sql.gz
+*.dump
+*.bak
+*.backup
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.zip
+*.7z
+*.tar
+*.tar.gz
+backups/
+backup/
+
+# Logs, temporary files and OS metadata
+*.log
+logs/
+*.tmp
+*.temp
+*.pid
+*.swp
+*.userprefs
+.DS_Store
+Thumbs.db
+Desktop.ini
+
