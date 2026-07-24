@@ -8,7 +8,7 @@ namespace BackDatabase.Services;
 /// <summary>
 /// 执行一次备份流程（对应 Go 版 invokeBack）：
 /// 1. 确保保存目录存在；
-/// 2. 若文件数超过 maxfiles，删除最旧文件；
+/// 2. 先删除 0 字节空文件，再按 maxfiles 删除最旧文件；
 /// 3. 通过策略解析 dbType，调用对应 dump 工具生成 .sql；
 /// 4. 失败则删除残缺文件并自动重试一次。
 /// </summary>
@@ -45,7 +45,7 @@ public sealed class BackupRunner
         var saveDir = config.ResolveSaveDir(_baseDir);
         Directory.CreateDirectory(saveDir);
 
-        // 先裁剪旧文件，再写新备份，避免磁盘被旧文件占满
+        // 先删空文件、再按数量裁剪旧备份，再写新文件，避免磁盘被脏/旧文件占满
         TrimOldFiles(saveDir, config.MaxFiles);
 
         var dbs = onlyDatabases ?? config.Databases;
@@ -279,11 +279,16 @@ public sealed class BackupRunner
     }
 
     /// <summary>
-    /// 当目录内文件数 &gt; maxFiles 时，按 LastWriteTimeUtc 从旧到新删除，直到不超过上限。
-    /// 对应 Go 的 getMinModifyTimeFile + 循环 Remove。
+    /// 清理保存目录：
+    /// 1. 先删除 0 字节空文件（失败/中断留下的残缺备份）；
+    /// 2. 再当文件数 &gt; maxFiles 时，按 LastWriteTimeUtc 从旧到新删除，直到不超过上限。
+    /// 对应 Go 的 getMinModifyTimeFile + 循环 Remove，并额外处理空文件。
     /// </summary>
     private static void TrimOldFiles(string saveDir, int maxFiles)
     {
+        // 先清 0KB 空文件，再按数量裁剪，避免空文件占 maxfiles 名额
+        DeleteEmptyFiles(saveDir);
+
         if (maxFiles <= 0)
             return;
 
@@ -308,6 +313,40 @@ public sealed class BackupRunner
                 // 删不掉就停止循环，避免死循环打日志
                 Console.WriteLine($"删除文件失败 {oldest.FullName}: {ex.Message}");
                 break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 删除目录内所有 0 字节文件（备份失败、中断或 dump 空输出时常见）。
+    /// 单个文件删失败只打日志并继续，不中断整体清理。
+    /// </summary>
+    private static void DeleteEmptyFiles(string saveDir)
+    {
+        IEnumerable<FileInfo> emptyFiles;
+        try
+        {
+            emptyFiles = Directory.EnumerateFiles(saveDir)
+                .Select(f => new FileInfo(f))
+                .Where(f => f.Length == 0)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"扫描空文件失败 {saveDir}: {ex.Message}");
+            return;
+        }
+
+        foreach (var file in emptyFiles)
+        {
+            try
+            {
+                file.Delete();
+                Console.WriteLine($"已删除空备份文件: {file.FullName}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"删除空文件失败 {file.FullName}: {ex.Message}");
             }
         }
     }
