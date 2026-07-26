@@ -6,8 +6,8 @@ using BackDatabase.Utils;
 // 注册代码页提供程序，便于 Windows 下将 mysqldump 的 GBK 错误信息尝试解码为可读中文
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-// 版本号对齐原 Go 版 3.1，后缀 -net 表示 .NET 移植版
-var version = "1.2";
+// 版本号
+var version = "1.3";
 Console.WriteLine($"{DateTime.UtcNow:yyyy-MM-dd_HH:mm:ss} 当前版本: {version}, 服务开启成功...");
 
 // 与 Go 版一致：以可执行文件所在目录为根目录（不是当前工作目录）

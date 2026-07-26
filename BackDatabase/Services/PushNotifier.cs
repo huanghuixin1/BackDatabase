@@ -97,16 +97,22 @@ public sealed class PushNotifier : IDisposable
             return;
         }
 
+        var schedule = FormatBackupSchedule(config);
+        // failAtLocal / failAtUtc 若将来要重新放进 msg，按 AGENTS 顺序规则追加，不要插到现有行中间打乱顺序
+
+        // 失败推送正文行序由用户约定，见 AGENTS.md「备份失败推送正文顺序」。
+        // 增减字段可以，禁止擅自重排：备份失败 → 数据库 → 备份计划 → 配置 → 主机 → 类型 → 原因
         var msg =
-            $"备份失败：" +
+            $"备份失败\n" +
             $"数据库: {database}\n" +
+            $"备份计划: {schedule}\n" +
             $"配置: {confName}\n" +
             $"主机: {config.Host}:{config.Port}\n" +
             $"类型: {config.DbType}\n" +
             $"原因: {Truncate(reason, 800)}";
 
         Console.WriteLine(
-            $"[推送中] 正在发送备份失败通知 -> {_client.BaseAddress} appKey={MaskKey(_env.PushKey)} hwid={_hwid} group={_group}");
+            $"[推送中] 正在发送备份失败通知 -> {_client.BaseAddress} appKey={MaskKey(_env.PushKey)} hwid={_hwid} group={_group} schedule={schedule}");
 
         try
         {
@@ -157,6 +163,26 @@ public sealed class PushNotifier : IDisposable
         // 注入的 HttpClient 由我们持有；SDK 在注入模式下不会 Dispose 它
         _client?.Dispose();
         _httpClient?.Dispose();
+    }
+
+    /// <summary>
+    /// 把 conf 的 backtime 格式化为可读计划：间隔分钟 或 每日 UTC 定点。
+    /// </summary>
+    private static string FormatBackupSchedule(BackupConfig config)
+    {
+        if (config.IntervalMinutes is { } minutes)
+        {
+            // 整数分钟不带小数，其它保留原 double 文本
+            var text = minutes % 1 == 0
+                ? ((long)minutes).ToString()
+                : minutes.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return $"每隔 {text} 分钟";
+        }
+
+        if (config.DailyAtUtc is { } daily)
+            return $"每天 {daily.Hour:D2}:{daily.Minute:D2} (UTC)";
+
+        return "未配置/无效";
     }
 
     /// <summary>

@@ -161,6 +161,19 @@ conf.dbType
   - 不要实现“根据用户输入执行任意 shell”。
 - **跨平台**：路径用 `Path.Combine` / `Path.GetFullPath`；`savedir` 先统一 `/` 再 `TrimStart('/')` 再拼接（见 `BackupConfig.ResolveSaveDir`）。
 - **时区**：调度与文件名时间戳一律 **UTC**（与 Go 原版一致）。若用户要本地时区，需显式需求再改，并写清文档。
+- **备份失败推送正文顺序（强制，勿擅自重排）**：  
+  位置：`PushNotifier.NotifyBackupFailure` 里组装的 `msg`。  
+  **当前固定行序**（增减字段时只插删内容，**不要打乱已有行的相对顺序**）：
+  1. `备份失败`
+  2. `数据库: …`
+  3. `备份计划: …`（间隔分钟 或 每日 UTC 定点，由 `FormatBackupSchedule` 生成）
+  4. `配置: …`
+  5. `主机: …`
+  6. `类型: …`
+  7. `原因: …`  
+  允许：在末尾追加新行、在两行之间插入新字段、删除某行。  
+  禁止：为了“好看/对称”把 `数据库/备份计划/配置/主机/类型/原因` 互相调换位置。  
+  用户已按接收端阅读习惯定序；改顺序需用户明确要求。
 
 ---
 
@@ -174,7 +187,7 @@ conf.dbType
 | 改调度（间隔/每日） | `BackupScheduler` |
 | 改 conf 格式/新键 | `ConfigLoader` + `BackupConfig` + 样例 conf + README |
 | 改失败重试、删旧文件、失败推送时机 | `BackupRunner` |
-| 改推送内容/HxPush 字段 | `PushNotifier` + `EnvConfig` |
+| 改推送内容/HxPush 字段 | `PushNotifier` + `EnvConfig`；**改失败 `msg` 时遵守第 5 节正文顺序规则** |
 | 改启动/退出 | `Program.cs` |
 | 用户文档 | `README.md` |
 | Agent 约定 | `AGENTS.md`（本文件） |
