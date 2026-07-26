@@ -29,6 +29,13 @@ public sealed class EnvConfig
     [JsonPropertyName("pushHwid")]
     public string PushHwid { get; set; } = "";
 
+    /// <summary>
+    /// 推送消息分组，对应 HxPushMsgModel.MsgGroup。
+    /// 为空时回退为 default（与 SDK/服务端默认一致）。
+    /// </summary>
+    [JsonPropertyName("pushGroup")]
+    public string PushGroup { get; set; } = "";
+
     /// <summary>推送地址与 AppKey 均非空时才启用消息推送。</summary>
     [JsonIgnore]
     public bool IsPushEnabled =>

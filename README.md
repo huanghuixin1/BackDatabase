@@ -48,7 +48,8 @@ BackDatabase/
 {
   "pushAddr": "http://127.0.0.1:5212",
   "pushKey": "your-app-key",
-  "pushHwid": ""
+  "pushHwid": "",
+  "pushGroup": "backDb"
 }
 ```
 
@@ -57,6 +58,7 @@ BackDatabase/
 | `pushAddr` | HxPush 服务地址（支持 `http(s)://` 或 `ws(s)://.../ws`，SDK 会规范为 HTTP 根） |
 | `pushKey` | 已在 HxPush 服务端登记的 AppKey |
 | `pushHwid` | 可选设备 ID；为空时回退为本机机器名，再回退为 `BackDatabase` |
+| `pushGroup` | 可选消息分组，对应 SDK 的 `MsgGroup`；为空时为 `default` |
 
 `pushAddr` 与 `pushKey` 都非空时启用推送；备份**最终失败**（含一次自动重试后仍失败）时推送一条消息。推送异常只记日志，不影响备份主流程。
 

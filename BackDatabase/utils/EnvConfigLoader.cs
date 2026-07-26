@@ -34,11 +34,14 @@ public static class EnvConfigLoader
             env.PushAddr = (env.PushAddr ?? "").Trim();
             env.PushKey = (env.PushKey ?? "").Trim();
             env.PushHwid = (env.PushHwid ?? "").Trim();
+            env.PushGroup = (env.PushGroup ?? "").Trim();
 
             if (env.IsPushEnabled)
             {
                 var hwid = string.IsNullOrWhiteSpace(env.PushHwid) ? "(空，将用机器名)" : env.PushHwid;
-                Console.WriteLine($"已加载 env.conf：消息推送已启用 -> {env.PushAddr}, pushHwid={hwid}");
+                var group = string.IsNullOrWhiteSpace(env.PushGroup) ? "default" : env.PushGroup;
+                Console.WriteLine(
+                    $"已加载 env.conf：消息推送已启用 -> {env.PushAddr}, pushHwid={hwid}, pushGroup={group}");
             }
             else
             {

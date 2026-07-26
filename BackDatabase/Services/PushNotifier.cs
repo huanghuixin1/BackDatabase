@@ -16,6 +16,7 @@ public sealed class PushNotifier : IDisposable
     private readonly HttpClient? _httpClient;
     private readonly HxPushWebApiClient? _client;
     private readonly string _hwid;
+    private readonly string _group;
     private readonly string _disableReason;
 
     [UnconditionalSuppressMessage(
@@ -30,6 +31,8 @@ public sealed class PushNotifier : IDisposable
     {
         _env = env ?? new EnvConfig();
         _hwid = ResolveHwid(_env.PushHwid);
+        // SDK 字段名为 MsgGroup；env 用 pushGroup，空则 default
+        _group = string.IsNullOrWhiteSpace(_env.PushGroup) ? "default" : _env.PushGroup.Trim();
 
         if (!_env.IsPushEnabled)
         {
@@ -52,7 +55,7 @@ public sealed class PushNotifier : IDisposable
             _client = new HxPushWebApiClient(_httpClient, baseUri, AppJsonContext.CreateOptions());
             _disableReason = "";
             Console.WriteLine(
-                $"消息推送已初始化: addr={_client.BaseAddress}, appKey={MaskKey(_env.PushKey)}, hwid={_hwid}");
+                $"消息推送已初始化: addr={_client.BaseAddress}, appKey={MaskKey(_env.PushKey)}, hwid={_hwid}, group={_group}");
         }
         catch (Exception ex)
         {
@@ -95,16 +98,15 @@ public sealed class PushNotifier : IDisposable
         }
 
         var msg =
-            $"[BackDatabase] 备份失败\n" +
-            $"时间(UTC): {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}\n" +
-            $"配置: {confName}\n" +
-            $"类型: {config.DbType}\n" +
-            $"主机: {config.Host}:{config.Port}\n" +
+            $"备份失败：" +
             $"数据库: {database}\n" +
-            $"Hwid: {_hwid}\n" +
+            $"配置: {confName}\n" +
+            $"主机: {config.Host}:{config.Port}\n" +
+            $"类型: {config.DbType}\n" +
             $"原因: {Truncate(reason, 800)}";
 
-        Console.WriteLine($"[推送中] 正在发送备份失败通知 -> {_client.BaseAddress} appKey={MaskKey(_env.PushKey)} hwid={_hwid}");
+        Console.WriteLine(
+            $"[推送中] 正在发送备份失败通知 -> {_client.BaseAddress} appKey={MaskKey(_env.PushKey)} hwid={_hwid} group={_group}");
 
         try
         {
@@ -113,6 +115,8 @@ public sealed class PushNotifier : IDisposable
                 ID = Guid.NewGuid().ToString("N"),
                 AppKey = _env.PushKey,
                 Hwid = _hwid,
+                // 对应 SDK/服务端分组字段 MsgGroup
+                MsgGroup = _group,
                 Msg = msg,
                 MsgDate = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 IsRead = false,

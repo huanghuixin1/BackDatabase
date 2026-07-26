@@ -100,6 +100,7 @@ BackDatabase/
 | `pushAddr` | HxPush 服务地址（http/https 或 ws/wss，SDK 会规范化） |
 | `pushKey` | AppKey；与 pushAddr 都非空才启用推送 |
 | `pushHwid` | 可选设备 ID；为空则回退机器名 / `BackDatabase` |
+| `pushGroup` | 可选消息分组，对应 SDK 字段 `MsgGroup`；为空则 `default` |
 
 ---
 
