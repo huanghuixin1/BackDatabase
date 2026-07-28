@@ -1,12 +1,11 @@
 # AGENTS.md — BackDatabase
 
 面向在本仓库中工作的编码助手（Claude Code / Cursor / 其他 Agent）的项目说明。  
-修改代码前请先读完本文与 `README.md`。
+修改代码前请先读完本文与仓库根 `README.md`。
 
 ---
 
 ## 1. 项目是什么
-
 
 | 项 | 值 |
 |---|---|
@@ -14,10 +13,10 @@
 | 项目类型 | 控制台可执行程序（`OutputType=Exe`） |
 | 程序集名 | `BackDatabase` |
 | 版本字符串 | `3.1-net`（对齐原 Go 3.1） |
-| 原版参考 | `D:\code\backmysql\main.go`、`config/*.conf` |
-| 解决方案 | `D:\code\BackDatabase\BackDatabase.slnx` |
-| 工程目录 | `D:\code\BackDatabase\BackDatabase\` |
-| 推送 SDK | `D:\code\HxPush\HxPushSdk`（项目引用） |
+| 本工程目录 | 本文件所在目录（`BackDatabase/`） |
+| 解决方案 | `../BackDatabase.slnx` |
+| 原版参考 | `../../backmysql/`（`main.go`、`config/*.conf`） |
+| 推送 SDK | `../../HxPush/HxPushSdk/`（csproj 以 DLL `Reference` 引用 Release 产物） |
 
 **不做的事：** 不内嵌数据库驱动做逻辑备份；不提供 Web UI；不热加载配置（改 conf / env.conf 必须重启）。
 
@@ -26,15 +25,16 @@
 ## 2. 目录与职责
 
 ```
-BackDatabase/
+BackDatabase/                         # 本工程（相对仓库根）
   Program.cs                          # 入口：env.conf → 备份 conf → 调度 → Ctrl+C
   env.conf.example                    # 全局 JSON 环境配置样例（复制为 env.conf）
   Models/
     BackupConfig.cs                   # 单 conf 对应的配置模型
     ConfigLoader.cs                   # 解析 key=value .conf
-    EnvConfig.cs                      # env.conf JSON 模型（pushAddr/pushKey/pushHwid）
+    EnvConfig.cs                      # env.conf JSON 模型（pushAddr/pushKey/pushHwid/pushGroup）
   Utils/
     EnvConfigLoader.cs                # 启动时加载 env.conf（非 model）
+    AppJsonContext.cs                 # STJ 源生成 + CreateOptions
   Services/
     BackupRunner.cs                   # 裁剪旧文件 + 调策略 + 起进程 + 重试 + 失败推送
     BackupScheduler.cs                # 间隔分钟 / 每日 UTC 调度循环
@@ -47,7 +47,6 @@ BackDatabase/
   config/
     *.conf.example                    # 样例（不加载）
     *.conf                            # 运行时配置（被加载；勿提交真实密码）
-  README.md                           # 用户向文档（仓库根也可有一份）
   AGENTS.md                           # 本文件（Agent 向）
 ```
 
@@ -61,7 +60,7 @@ BackDatabase/
 外部依赖：
 
 - `System.Text.Encoding.CodePages`：Windows 下 GBK 解码 dump 错误
-- 项目引用 `..\..\HxPush\HxPushSdk\HxPushSdk.csproj`：备份失败消息推送
+- `HxPushSdk` / `HxPushModel`：DLL 引用（见 csproj `HintPath`，相对本工程 `../../HxPush/...`）
 
 ---
 
@@ -161,24 +160,11 @@ conf.dbType
   - 不要实现“根据用户输入执行任意 shell”。
 - **跨平台**：路径用 `Path.Combine` / `Path.GetFullPath`；`savedir` 先统一 `/` 再 `TrimStart('/')` 再拼接（见 `BackupConfig.ResolveSaveDir`）。
 - **时区**：调度与文件名时间戳一律 **UTC**（与 Go 原版一致）。若用户要本地时区，需显式需求再改，并写清文档。
-- **备份失败推送正文顺序（强制，勿擅自重排）**：  
-  位置：`PushNotifier.NotifyBackupFailure` 里组装的 `msg`。  
-  **当前固定行序**（增减字段时只插删内容，**不要打乱已有行的相对顺序**）：
-  1. `备份失败`
-  2. `数据库: …`
-  3. `备份计划: …`（间隔分钟 或 每日 UTC 定点，由 `FormatBackupSchedule` 生成）
-  4. `配置: …`
-  5. `主机: …`
-  6. `类型: …`
-  7. `原因: …`  
-  允许：在末尾追加新行、在两行之间插入新字段、删除某行。  
-  禁止：为了“好看/对称”把 `数据库/备份计划/配置/主机/类型/原因` 互相调换位置。  
-  用户已按接收端阅读习惯定序；改顺序需用户明确要求。
+- **备份失败推送正文顺序（强制定序）**：`备份失败→数据库→备份计划→配置→主机→类型→原因`。改内容时只增删对应行，**不得调换行序**。
 
 ---
 
-
-## 7. 改动决策指南
+## 6. 改动决策指南
 
 | 需求 | 改哪里 |
 |---|---|
@@ -189,10 +175,12 @@ conf.dbType
 | 改失败重试、删旧文件、失败推送时机 | `BackupRunner` |
 | 改推送内容/HxPush 字段 | `PushNotifier` + `EnvConfig`；**改失败 `msg` 时遵守第 5 节正文顺序规则** |
 | 改启动/退出 | `Program.cs` |
-| 用户文档 | `README.md` |
+| 用户文档 | 仓库根 `README.md` |
 | Agent 约定 | `AGENTS.md`（本文件） |
 
-## 8. 明确不要做的事
+---
+
+## 7. 明确不要做的事
 
 - 不要把 `config/*.conf` / `env.conf`（含真实密码、pushKey）提交进 git。
 - 不要在 `BackupRunner` 里按数据库类型堆 `switch`。
@@ -204,7 +192,7 @@ conf.dbType
 
 ---
 
-## 9. 快速自检（提交前）
+## 8. 快速自检（提交前）
 
 - [ ] `dotnet build -c Release` 0 错误  
 - [ ] 新 dbType 已注册且 `SupportedDbTypes` 有别名  
@@ -212,15 +200,3 @@ conf.dbType
 - [ ] 中文注释覆盖新类/关键逻辑  
 - [ ] conf / env 样例与 README、AGENTS 已同步（若改了配置或行为）  
 - [ ] 未破坏：相对 exe 的 `config/` 与 `env.conf`、UTC 调度、失败重试一次、空文件+maxfiles 裁剪、失败推送  
-
----
-
-## 10. 相关路径速查
-
-| 路径 | 说明 |
-|---|---|
-| `D:\code\BackDatabase\BackDatabase.slnx` | VS 解决方案 |
-| `D:\code\BackDatabase\BackDatabase\` | 本工程根目录 |
-| `config/*.conf` | 运行时备份配置（exe 旁） |
-| `env.conf` | 全局环境配置（exe 旁，JSON） |
-| `D:\code\HxPush\HxPushSdk` | 消息推送 SDK |
