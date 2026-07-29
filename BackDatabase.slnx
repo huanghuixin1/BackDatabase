@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="BackDatabase/BackDatabase.csproj" />
+  <Project Path="BackDatabaseManageServer/BackDatabaseManageServer.csproj" Id="645a53c8-07ed-4ad1-9f82-39fbf3b68630" />
 </Solution>
