@@ -40,6 +40,11 @@
     <None Update="env.conf">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- Kestrel 管理界面的静态资源，运行时从 exe 同目录的 web/ 提供 -->
+    <None Update="web\**\*.html;web\**\*.css;web\**\*.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
   </ItemGroup>
 
   <!-- 裁剪时整库保留推送 SDK，内部反射序列化才能扫到元数据 -->
@@ -53,6 +58,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="HxPushModel">
       <HintPath>..\..\HxPush\HxPushSdk\bin\Release\net8.0\HxPushModel.dll</HintPath>
     </Reference>
@@ -60,5 +69,6 @@
       <HintPath>..\..\HxPush\HxPushSdk\bin\Release\net8.0\HxPushSdk.dll</HintPath>
     </Reference>
   </ItemGroup>
+
 
 </Project>

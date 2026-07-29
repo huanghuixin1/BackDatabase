@@ -35,6 +35,12 @@ public static class EnvConfigLoader
             env.PushKey = (env.PushKey ?? "").Trim();
             env.PushHwid = (env.PushHwid ?? "").Trim();
             env.PushGroup = (env.PushGroup ?? "").Trim();
+            // 口令首尾空白可能是有意的，这里不做 Trim
+            env.WebPassword = env.WebPassword ?? "";
+
+            Console.WriteLine(env.IsWebAuthEnabled
+                ? "已加载 env.conf：Web 管理界面访问口令已启用。"
+                : "已加载 env.conf：未设置 webPassword，Web 管理界面无需登录。");
 
             if (env.IsPushEnabled)
             {

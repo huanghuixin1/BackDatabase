@@ -10,7 +10,7 @@
 | 项 | 值 |
 |---|---|
 | 语言 / 运行时 | C# / .NET 10（`net10.0`） |
-| 项目类型 | 控制台可执行程序（`OutputType=Exe`） |
+| 项目类型 | Kestrel Web 宿主 + 备份调度（`OutputType=Exe`） |
 | 程序集名 | `BackDatabase` |
 | 版本字符串 | `3.1-net`（对齐原 Go 3.1） |
 | 本工程目录 | 本文件所在目录（`BackDatabase/`） |
@@ -18,7 +18,7 @@
 | 原版参考 | `../../backmysql/`（`main.go`、`config/*.conf`） |
 | 推送 SDK | `../../HxPush/HxPushSdk/`（csproj 以 DLL `Reference` 引用 Release 产物） |
 
-**不做的事：** 不内嵌数据库驱动做逻辑备份；不提供 Web UI；不热加载配置（改 conf / env.conf 必须重启）。
+**边界：** 不内嵌数据库驱动做逻辑备份；提供仅监听本机的 Kestrel 配置管理 UI；不热加载配置（改 conf / env.conf 必须重启）。
 
 ---
 
@@ -77,7 +77,7 @@ BackDatabase/                         # 本工程（相对仓库根）
 6. **备份失败**：删残缺 `.sql`，同一库自动重试 **一次**；**重试仍失败**（或无法重试的配置错误）才走 `PushNotifier`。
 7. **清理顺序**：写新文件前先删 **0 字节空文件**，再按 `LastWriteTimeUtc` 删最旧直到 ≤ `maxfiles`。
 8. **文件名**：`{db}_{yyyy-MM-dd__HH.mm.ss}.sql`（UTC，点代替冒号，兼容 Windows）。
-9. **无任何 conf**：打印提示并以退出码 `1` 结束，不空转。`env.conf` 缺失不阻断启动。
+9. **无任何 conf**：打印提示，不启动备份调度，但保持 Web 管理服务运行，允许创建配置。`env.conf` 缺失不阻断启动。
 10. **Ctrl+C**：`CancelKeyPress` 取消调度，优雅退出；取消过程中不发失败推送。
 11. **推送失败只打日志**，不得中断备份调度循环。
 

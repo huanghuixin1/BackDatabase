@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>BackDatabase 配置中心</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="#tasks" aria-label="BackDatabase 首页">
+        <span class="brand-mark">B</span>
+        <span><strong>BackDatabase</strong><small>配置中心</small></span>
+      </a>
+      <nav aria-label="主导航">
+        <button class="nav-item active" data-view="tasks"><span>▦</span>备份任务</button>
+        <button class="nav-item" data-view="environment"><span>⌁</span>消息推送</button>
+      </nav>
+      <div class="side-note">
+        <span class="status-dot"></span>
+        <div><strong>服务运行中</strong><small id="utc-clock">正在同步 UTC 时间</small></div>
+      </div>
+      <button class="nav-item logout-item" id="logout-button" hidden><span>⏻</span>退出登录</button>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">LOCAL ADMINISTRATION</p>
+          <h1 id="page-title">备份任务</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="ghost" id="restart-button"><span>↻</span> 重启服务</button>
+          <button class="primary" id="add-button"><span>＋</span> 新建配置</button>
+        </div>
+      </header>
+
+      <div class="restart-banner" role="note">
+        <span>i</span>
+        <p><strong>配置变更将在重启后生效</strong> 页面写入配置文件，但不会中断当前正在运行的备份任务。</p>
+      </div>
+
+      <section id="tasks-view" class="view active">
+        <div class="summary-grid">
+          <article class="metric"><small>配置总数</small><strong id="config-count">—</strong><span>个备份任务</span></article>
+          <article class="metric accent"><small>数据库类型</small><strong id="db-types">—</strong><span>当前已配置</span></article>
+          <article class="metric"><small>运行时区</small><strong>UTC</strong><span>固定时刻均按 UTC</span></article>
+        </div>
+
+        <div class="section-heading">
+          <div><h2>任务配置</h2><p>每个配置对应一个独立的备份调度任务。</p></div>
+          <button class="ghost" id="refresh-button">↻ 刷新</button>
+        </div>
+        <div id="config-list" class="config-grid" aria-live="polite"></div>
+        <div id="empty-state" class="empty" hidden>
+          <div class="empty-icon">⌁</div>
+          <h2>还没有备份配置</h2>
+          <p>创建第一项数据库备份任务，然后重启 BackDatabase。</p>
+          <button class="primary" id="empty-add">新建配置</button>
+        </div>
+      </section>
+
+      <section id="environment-view" class="view">
+        <div class="form-card environment-card">
+          <div class="section-heading compact">
+            <div><h2>失败消息推送</h2><p>备份最终失败时，通过 HxPush 发送告警。</p></div>
+            <span class="pill" id="push-state">未配置</span>
+          </div>
+          <form id="environment-form">
+            <label class="field wide"><span>HxPush 服务地址</span><input name="pushAddr" placeholder="http://127.0.0.1:5212"></label>
+            <label class="field wide"><span>Push Key</span><input name="pushKey" type="password" autocomplete="new-password" placeholder="留空保留现有 Key"></label>
+            <label class="checkbox wide"><input name="clearPushKey" type="checkbox"> 清除已保存的 Push Key</label>
+            <label class="field"><span>设备 ID</span><input name="pushHwid" placeholder="留空使用本机机器名"></label>
+            <label class="field"><span>消息分组</span><input name="pushGroup" placeholder="default"></label>
+            <div class="form-actions wide"><button type="submit" class="primary">保存推送配置</button></div>
+          </form>
+        </div>
+      </section>
+
+      <!-- 新增：Web 访问口令登录页面 -->
+      <section id="login-view" class="view">
+        <div class="form-card environment-card" style="max-width: 420px; margin: 100px auto;">
+          <div class="section-heading compact">
+            <div><h2>管理界面登录</h2><p>请输入管理界面访问口令</p></div>
+          </div>
+          <form id="login-form">
+            <label class="field wide">
+              <span>访问口令</span>
+              <input name="webPassword" type="password" autocomplete="new-password" placeholder="6位以上" required>
+            </label>
+            <div class="form-actions wide"><button type="submit" class="primary">登录</button></div>
+          </form>
+          <p id="login-message" style="text-align:center; color:#666; margin-top:12px; font-size:13px;"></p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="config-dialog">
+    <form id="config-form" method="dialog">
+      <div class="dialog-head">
+        <div><p class="eyebrow">BACKUP PROFILE</p><h2 id="dialog-title">新建备份配置</h2></div>
+        <button class="icon-button" type="button" id="close-dialog" aria-label="关闭">×</button>
+      </div>
+      <div class="dialog-body">
+        <label class="field wide"><span>配置名称</span><div class="suffix-input"><input name="fileName" required maxlength="64" placeholder="例如 production"><b>.conf</b></div><small>支持字母、数字、点、下划线和短横线</small></label>
+        <label class="field"><span>数据库类型</span><select name="dbType"><option value="mysql">MySQL / MariaDB</option><option value="pgsql">PostgreSQL</option></select></label>
+        <label class="field"><span>主机地址</span><input name="host" required value="127.0.0.1"></label>
+        <label class="field"><span>端口</span><input name="port" required inputmode="numeric" value="3306"></label>
+        <label class="field"><span>用户名</span><input name="user" required value="root" autocomplete="username"></label>
+        <label class="field wide"><span>密码</span><input name="password" type="password" autocomplete="new-password" placeholder="编辑时留空可保留原密码"><small id="password-hint">新配置可留空，适用于无密码连接。</small></label>
+        <label class="checkbox wide"><input name="clearPassword" type="checkbox"> 清除已保存的数据库密码</label>
+        <label class="field wide"><span>数据库</span><input name="databases" required placeholder="app, analytics"><small>多个数据库使用英文逗号分隔</small></label>
+        <label class="field"><span>备份计划</span><input name="backtime" required value="60"><small>分钟数，或每日 UTC 时刻 HH:mm</small></label>
+        <label class="field"><span>最大保留数量</span><input name="maxFiles" type="number" min="1" required value="180"></label>
+        <label class="field wide"><span>保存目录</span><input name="saveDir" required value="/backup/"><small>相对于程序目录，例如 /backup/</small></label>
+      </div>
+      <div class="dialog-actions"><button class="ghost" type="button" id="cancel-dialog">取消</button><button class="primary" type="submit">保存配置</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

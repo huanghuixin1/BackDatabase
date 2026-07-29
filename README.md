@@ -31,6 +31,7 @@ BackDatabase/
     BackupRunner.cs       # 调用 dump 工具、裁剪旧文件
     BackupScheduler.cs    # 间隔 / 每日 UTC 调度
     PushNotifier.cs       # 备份失败时 HxPush 推送
+  web/                    # Kestrel 配置管理页面与 API
   config/
     52hhx.com.conf.example
 ```
@@ -39,6 +40,9 @@ BackDatabase/
 
 1. 读取 **可执行文件目录下** 的 `env.conf`（JSON，可选；不存在则推送关闭）
 2. 扫描同目录 `config/*.conf`（仅 `.conf`，`.example` 不加载）
+3. 启动本机 Kestrel 管理界面：`http://127.0.0.1:5080`
+
+页面可维护 `config/*.conf` 备份配置及 `env.conf` 推送配置。保存后需重启程序生效；默认仅监听本机，不提供远程未认证管理端口。
 
 ## 全局环境配置 `env.conf`
 
@@ -115,6 +119,8 @@ dotnet run
 # 发布
 dotnet publish -c Release -o publish
 ```
+
+发布目录必须保留自动复制的 `web/` 文件夹；浏览器访问 `http://127.0.0.1:5080` 打开配置中心。
 
 Linux 后台：
 

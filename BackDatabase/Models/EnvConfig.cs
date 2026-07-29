@@ -36,8 +36,20 @@ public sealed class EnvConfig
     [JsonPropertyName("pushGroup")]
     public string PushGroup { get; set; } = "";
 
+    /// <summary>
+    /// Web 配置管理界面的访问口令。
+    /// 为空表示不校验（与旧版本行为一致）；非空时所有配置接口需先登录。
+    /// 首尾空白有意义，加载时不做 Trim。
+    /// </summary>
+    [JsonPropertyName("webPassword")]
+    public string WebPassword { get; set; } = "";
+
     /// <summary>推送地址与 AppKey 均非空时才启用消息推送。</summary>
     [JsonIgnore]
     public bool IsPushEnabled =>
         !string.IsNullOrWhiteSpace(PushAddr) && !string.IsNullOrWhiteSpace(PushKey);
+
+    /// <summary>配置了访问口令时才启用 Web 界面登录校验。</summary>
+    [JsonIgnore]
+    public bool IsWebAuthEnabled => !string.IsNullOrEmpty(WebPassword);
 }
