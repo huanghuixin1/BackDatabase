@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using BackDatabase.Config;
 using BackDatabase.Services;
@@ -6,9 +5,6 @@ using BackDatabase.Utils;
 using BackDatabase.Web; // 添加 Web 命名空间，以便使用 ConfigWebService
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting; // UseUrls 扩展方法所在命名空间
-using Microsoft.Extensions.Hosting;
-using Microsoft.AspNetCore.Http;
-
 
 // 注册代码页提供程序，便于 Windows 下将 mysqldump 的 GBK 错误信息尝试解码为可读中文
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -47,7 +43,7 @@ var scheduler = new BackupScheduler(runner);
 scheduler.StartAll(configs);
 
 // ==== Web 管理界面 ====
-const string webUrls = "http://127.0.0.1:5080";
+const string webUrls = "http://0.0.0.0:5080";
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls(webUrls);
 var app = builder.Build();

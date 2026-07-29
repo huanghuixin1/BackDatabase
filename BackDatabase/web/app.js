@@ -11,6 +11,9 @@ const form = $('#config-form');
 const loginForm = $('#login-form');
 const loginMessage = $('#login-message');
 
+// localStorage 键名：保存「记住访问口令」勾选后的口令（明文，仅本机浏览器）
+const REMEMBER_KEY = 'backdb_web_password';
+
 async function api(url, options = {}) {
   const response = await fetch(url, {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
@@ -145,6 +148,14 @@ async function loadSession() {
     showView('login');
     loginForm.reset();
     loginMessage.textContent = '';
+    // 如果之前勾过「记住访问口令」，预填并默认勾选
+    const saved = localStorage.getItem(REMEMBER_KEY) || '';
+    if (saved) {
+      loginForm.elements.webPassword.value = saved;
+      loginForm.elements.remember.checked = true;
+    } else {
+      loginForm.elements.remember.checked = false;
+    }
     loginForm.elements.webPassword.focus();
     return;
   }
@@ -160,10 +171,14 @@ async function login(e) {
   e.preventDefault();
   const password = loginForm.elements.webPassword.value;
   if (!password) return;
+  const remember = loginForm.elements.remember.checked;
 
   try {
     const res = await api('/api/session', { method: 'POST', body: JSON.stringify({ password }) });
     state.authenticated = true;
+    // 登录成功后处理「记住访问口令」：勾选则存本机，否则清掉旧值
+    if (remember) localStorage.setItem(REMEMBER_KEY, password);
+    else localStorage.removeItem(REMEMBER_KEY);
     toast(res.message);
     // 登录成功，重新走一遍会话流程：会自动切到 tasks 视图并加载数据
     await loadSession();
