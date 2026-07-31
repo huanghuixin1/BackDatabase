@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BackDatabase 管理中心</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <section id="login-view" class="login-shell">
+    <form id="login-form" class="login-card">
+      <div class="eyebrow">BACKDATABASE</div>
+      <h1>管理中心</h1>
+      <p class="muted">登录 server 后管理已登记的 back 节点。</p>
+      <label>管理口令<input id="login-password" type="password" autocomplete="current-password" required></label>
+      <button class="primary" type="submit">登录</button>
+      <p id="login-message" class="form-message" role="alert"></p>
+    </form>
+  </section>
+
+  <div id="app" class="app hidden">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">B</span><span>BackDatabase<br><small>Manage Server</small></span></div>
+      <nav>
+        <button class="nav-item active" data-scroll="overview">节点概览</button>
+        <button class="nav-item" data-scroll="add-node">添加节点</button>
+      </nav>
+      <button id="logout-button" class="sidebar-action">退出登录</button>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div><div class="eyebrow">SERVER CONSOLE</div><h2>节点概览</h2></div>
+        <button id="refresh-button" class="secondary">刷新</button>
+      </header>
+
+      <section id="overview" class="section">
+        <div class="metrics">
+          <div class="metric-card"><span>节点总数</span><strong id="node-count">0</strong></div>
+          <div class="metric-card"><span>已启用</span><strong id="enabled-count">0</strong></div>
+          <div class="metric-card"><span>最近操作</span><strong id="last-action">—</strong></div>
+        </div>
+        <div id="node-list" class="node-grid"></div>
+        <div id="node-empty" class="empty hidden">还没有节点，先添加一台 BackDatabase。</div>
+      </section>
+
+      <section id="add-node" class="section add-section">
+        <div class="section-heading"><div><div class="eyebrow">REGISTRATION</div><h3>添加 BackDatabase 节点</h3></div></div>
+        <form id="node-form" class="form-card">
+          <label>节点名称<input id="node-name" required maxlength="80" placeholder="例如：生产库 01"></label>
+          <label>Back 地址<input id="node-url" type="url" required placeholder="https://back-01.example.internal"></label>
+          <label>Web 口令<input id="node-password" type="password" required minlength="6" autocomplete="new-password"></label>
+          <label class="check"><input id="node-enabled" type="checkbox" checked> 启用节点</label>
+          <div class="form-actions"><button class="primary" type="submit">保存节点</button><button id="reset-node" class="secondary" type="button">清空</button></div>
+          <p id="node-message" class="form-message" role="alert"></p>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="details-dialog">
+    <form method="dialog" class="dialog-card">
+      <button class="dialog-close" value="cancel" aria-label="关闭">×</button>
+      <div class="eyebrow">NODE DETAILS</div>
+      <h3 id="details-title">节点详情</h3>
+      <div class="detail-actions"><button id="detail-refresh" class="secondary" type="button">刷新状态</button><button id="detail-restart" class="warning" type="button">重启 back</button></div>
+      <h4>状态</h4><pre id="status-output" class="code-block">加载中…</pre>
+      <h4>配置</h4><pre id="configs-output" class="code-block">加载中…</pre>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

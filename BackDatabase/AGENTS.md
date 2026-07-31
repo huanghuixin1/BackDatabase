@@ -24,7 +24,7 @@
 - 不得把路径基准从 `AppContext.BaseDirectory` 改成 `Environment.CurrentDirectory`，也不要让 `env.conf`、`config/`、`web/` 的定位依赖启动目录。
 - 保持配置启动快照语义，不擅自增加热加载。若需求明确要热加载，必须同时设计调度任务的增删改、并发和失败回滚。
 - 新增数据库类型必须实现 `IDatabaseBackupStrategy`，返回 `DumpCommand`，并在 `DatabaseBackupStrategyFactory.CreateDefault()` 注册；不要在 `BackupRunner` 中堆数据库类型分支。
-- 外部命令必须通过 `ProcessStartInfo.ArgumentList` 传参，不得拼接用户输入后交给 shell。`DisplayCommand` 和日志中的密码、Push Key、Web 口令必须脱敏。
+- 数据库备份命令必须通过 `ProcessStartInfo.ArgumentList` 传参，不得拼接用户输入后交给 shell。`DisplayCommand` 和日志中的密码、Push Key、Web 口令必须脱敏。`web/AppEntry.cs` 的 Windows 自重启为受控例外，它通过 `cmd /c start` 脱离父进程；修改时必须保持参数转义，且不得引入 Web 用户可控参数。
 - 保持调度语义：间隔模式立即首跑；每日模式使用 UTC 且每日最多一次；取消时终止 dump 进程树、删除残缺文件，不重试、不发送失败通知。
 - 单个配置解析失败不得影响其他配置；单次备份异常不得终止调度循环；推送失败只记录日志，不得反向中断备份。
 - 备份失败时删除残缺 SQL，同一数据库只自动重试一次；重试仍失败或遇到不可重试的配置错误时才发送失败通知。
