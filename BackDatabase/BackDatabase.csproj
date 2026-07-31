@@ -68,6 +68,9 @@
     <Reference Include="HxPushSdk">
       <HintPath>..\..\HxPush\HxPushSdk\bin\Release\net8.0\HxPushSdk.dll</HintPath>
     </Reference>
+    <Reference Include="HxSimpleWebAuth">
+      <HintPath>..\..\fc\checkserver\HxSimpleWebAuth\bin\Release\net8.0\HxSimpleWebAuth.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
 

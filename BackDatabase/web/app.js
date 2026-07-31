@@ -12,18 +12,40 @@ const loginForm = $('#login-form');
 const loginMessage = $('#login-message');
 
 // localStorage 键名：保存「记住访问口令」勾选后的口令（明文，仅本机浏览器）
+const TOKEN_KEY = 'backdb_auth_token';
 const REMEMBER_KEY = 'backdb_web_password';
 
-async function api(url, options = {}) {
-  const response = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    ...options,
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.message || body.detail || `请求失败 (${response.status})`);
-  return body;
+function getAuthToken() {
+  return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY) || '';
 }
 
+function setAuthToken(token, remember) {
+  sessionStorage.setItem(TOKEN_KEY, token);
+  if (remember) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+function clearAuthToken() {
+  sessionStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+async function api(url, options = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(options.headers || {}),
+  };
+  const token = getAuthToken();
+  if (token && !headers.Authorization) headers.Authorization = `Bearer ${token}`;
+
+  const response = await fetch(url, {
+    ...options,
+    headers,
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.message || body.error || body.detail || `请求失败 (${response.status})`);
+  return body;
+}
 function toast(message, isError = false) {
   const node = $('#toast');
   node.textContent = message;
@@ -174,12 +196,13 @@ async function login(e) {
   const remember = loginForm.elements.remember.checked;
 
   try {
-    const res = await api('/api/session', { method: 'POST', body: JSON.stringify({ password }) });
+    const res = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ key: password }) });
     state.authenticated = true;
+    setAuthToken(res.token, remember);
     // 登录成功后处理「记住访问口令」：勾选则存本机，否则清掉旧值
     if (remember) localStorage.setItem(REMEMBER_KEY, password);
     else localStorage.removeItem(REMEMBER_KEY);
-    toast(res.message);
+    toast('登录成功');
     // 登录成功，重新走一遍会话流程：会自动切到 tasks 视图并加载数据
     await loadSession();
   } catch (error) {
@@ -191,7 +214,8 @@ async function login(e) {
 
 async function logout() {
   try {
-    await api('/api/session', { method: 'DELETE' });
+    await api('/api/auth/logout', { method: 'POST' });
+    clearAuthToken();
     state.authenticated = false;
     toast('已退出登录');
     await loadSession();

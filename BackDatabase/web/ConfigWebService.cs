@@ -1,10 +1,12 @@
 using System.Globalization;
+using System.Net;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using BackDatabase.Config;
 using BackDatabase.Utils;
+using HxSimpleWebAuth;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -22,7 +24,7 @@ public static partial class ConfigWebService
     /// <param name="app">Kestrel 宿主</param>
     /// <param name="baseDir">程序根目录（env.conf 所在目录）</param>
     /// <param name="configDir">备份配置目录</param>
-    /// <param name="webPassword">env.conf 的 webPassword；为空则不启用登录校验</param>
+    /// <param name="webPassword">env.conf 的 webPassword；为空则仅允许本机回环来源访问 API，不启用登录校验</param>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2026",
@@ -34,26 +36,44 @@ public static partial class ConfigWebService
     public static void Configure(WebApplication app, string baseDir, string configDir, string? webPassword = null)
     {
         var store = new ConfigFileStore(baseDir, configDir);
-        var auth = new WebAuthGuard(webPassword);
+        var authRequired = !string.IsNullOrEmpty(webPassword);
+        var auth = new WebAdminAuth(webPassword ?? string.Empty, logDirectory: baseDir);
         var webDir = Path.Combine(baseDir, "web");
 
-        // 访问口令中间件：只拦 /api，登录接口与静态页面本身不含敏感数据，始终放行。
+        // HxSimpleWebAuth owns credential, token, IP binding, and lockout validation.
         app.Use(async (context, next) =>
         {
             var path = context.Request.Path;
-            if (!auth.Required
-                || !path.StartsWithSegments("/api")
+            if (!path.StartsWithSegments("/api")
                 || path.StartsWithSegments("/api/session")
-                || auth.IsValidSession(context.Request.Cookies[WebAuthGuard.CookieName]))
+                || auth.IsAuthPath(path.ToString()))
             {
                 await next();
                 return;
             }
 
-            // 手写 JSON，避免为一条固定提示引入反射序列化
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            context.Response.ContentType = "application/json; charset=utf-8";
-            await context.Response.WriteAsync("{\"message\":\"请先输入管理界面访问口令。\"}");
+            if (!authRequired)
+            {
+                // 未配置 webPassword 时不再全部放行（fail-closed）：仅本机回环来源免认证，
+                // 其余来源一律拒绝，避免监听地址被改动或绕过本机边界时管理面裸奔。
+                if (IsLoopbackAddress(context.Connection.RemoteIpAddress))
+                {
+                    await next();
+                    return;
+                }
+
+                await WriteApiResponseAsync(context, ApiResponse.Error(403, "Forbidden: loopback only when webPassword is not configured."));
+                return;
+            }
+
+            var request = await CreateAuthRequestAsync(context);
+            if (auth.Authorize(request))
+            {
+                await next();
+                return;
+            }
+
+            await WriteApiResponseAsync(context, ApiResponse.Error(401, "Unauthorized."));
         });
 
         if (Directory.Exists(webDir))
@@ -63,38 +83,50 @@ public static partial class ConfigWebService
             app.MapGet("/", () => Results.File(Path.Combine(webDir, "index.html"), "text/html; charset=utf-8"));
         }
 
-        // 会话状态：前端据此决定是否弹出登录框
         app.MapGet("/api/session", (HttpContext context) => Results.Ok(new
         {
-            required = auth.Required,
-            authenticated = auth.IsValidSession(context.Request.Cookies[WebAuthGuard.CookieName]),
+            required = authRequired,
+            authenticated = !authRequired || auth.Authorize(CreateAuthRequest(context)),
         }));
 
-        app.MapPost("/api/session", (HttpContext context, LoginRequest request) =>
+        app.MapPost("/api/auth/login", async (HttpContext context) =>
         {
-            if (!auth.Required)
-                return Results.Ok(new { message = "当前未配置访问口令，可直接使用。" });
-
-            var result = auth.Login(request.Password);
-            if (!result.Success)
-                return Results.Json(new { message = result.Message }, statusCode: StatusCodes.Status401Unauthorized);
-
-            context.Response.Cookies.Append(WebAuthGuard.CookieName, result.Token!, new CookieOptions
-            {
-                HttpOnly = true,
-                SameSite = SameSiteMode.Strict,
-                IsEssential = true,
-                Path = "/",
-                MaxAge = auth.Lifetime,
-            });
-            return Results.Ok(new { message = result.Message });
+            var response = auth.Handle(await CreateAuthRequestAsync(context), context.Request.Path.ToString());
+            await WriteApiResponseAsync(context, response);
         });
 
-        app.MapDelete("/api/session", (HttpContext context) =>
+        app.MapPost("/api/auth/logout", async (HttpContext context) =>
         {
-            auth.Logout(context.Request.Cookies[WebAuthGuard.CookieName]);
-            context.Response.Cookies.Delete(WebAuthGuard.CookieName, new CookieOptions { Path = "/" });
-            return Results.Ok(new { message = "已退出登录。" });
+            var response = auth.Handle(await CreateAuthRequestAsync(context), context.Request.Path.ToString());
+            await WriteApiResponseAsync(context, response);
+        });
+
+        // Keep the old session routes as adapters; validation still runs in HxSimpleWebAuth.
+        app.MapPost("/api/session", async (HttpContext context, LoginRequest request) =>
+        {
+            if (!authRequired)
+            {
+                await WriteApiResponseAsync(context, ApiResponse.Json(200, new { message = "Authentication is disabled." }));
+                return;
+            }
+
+            var body = JsonSerializer.Serialize(new { key = request.Password });
+            var response = auth.Handle(CreateAuthRequest(context, body), "/api/auth/login");
+            await WriteApiResponseAsync(context, response);
+        });
+
+        app.MapDelete("/api/session", async (HttpContext context) =>
+        {
+            if (!authRequired)
+            {
+                await WriteApiResponseAsync(context, ApiResponse.Json(200, new { message = "Authentication is disabled." }));
+                return;
+            }
+
+            var response = auth.Handle(
+                CreateAuthRequest(context, method: "POST"),
+                "/api/auth/logout");
+            await WriteApiResponseAsync(context, response);
         });
 
         app.MapGet("/api/configs", () => ApiCall(store.List));
@@ -133,6 +165,56 @@ public static partial class ConfigWebService
         app.MapFallback(() => Results.NotFound(new { message = "页面资源不存在，请确认发布目录中包含 web 文件夹。" }));
     }
 
+    /// <summary>判断是否本机回环地址；兼容 IPv4（127/8）、IPv6（::1）与 IPv4 映射的 IPv6 地址。</summary>
+    private static bool IsLoopbackAddress(IPAddress? address)
+    {
+        if (address is null)
+        {
+            return false;
+        }
+
+        if (address.IsIPv4MappedToIPv6)
+        {
+            address = address.MapToIPv4();
+        }
+
+        return IPAddress.IsLoopback(address);
+    }
+
+    private static HttpRequestData CreateAuthRequest(HttpContext context, string body = "", string? method = null)
+    {
+        var headers = context.Request.Headers.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.ToString(),
+            StringComparer.OrdinalIgnoreCase);
+        var target = $"{context.Request.PathBase}{context.Request.Path}{context.Request.QueryString}";
+        var remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return new HttpRequestData(
+            (method ?? context.Request.Method).ToUpperInvariant(),
+            target,
+            headers,
+            body,
+            remoteIp);
+    }
+
+    private static async Task<HttpRequestData> CreateAuthRequestAsync(HttpContext context)
+    {
+        context.Request.EnableBuffering();
+        using var reader = new StreamReader(context.Request.Body, leaveOpen: true);
+        var body = await reader.ReadToEndAsync(context.RequestAborted);
+        context.Request.Body.Position = 0;
+        return CreateAuthRequest(context, body);
+    }
+
+    private static async Task WriteApiResponseAsync(HttpContext context, ApiResponse response)
+    {
+        context.Response.StatusCode = response.StatusCode;
+        if (response.AllowHeader is not null)
+            context.Response.Headers.Allow = response.AllowHeader;
+        context.Response.ContentType = "application/json; charset=utf-8";
+        context.Response.ContentLength = response.Body.Length;
+        await context.Response.Body.WriteAsync(response.Body, context.RequestAborted);
+    }
     private static IResult ApiCall<T>(Func<T> action)
     {
         try
