@@ -1,202 +1,91 @@
-# AGENTS.md — BackDatabase
+# Project Memory
 
-面向在本仓库中工作的编码助手（Claude Code / Cursor / 其他 Agent）的项目说明。  
-修改代码前请先读完本文与仓库根 `README.md`。
+以后处理 back 项目时，先读本文件，再按需阅读仓库根 `AGENTS.md` 和 `README.md`。
 
----
+本文件只记录长期有效的项目事实、不可破坏的约束、导航入口和已知问题；一次性任务细节不要写进来。
 
-## 1. 项目是什么
+## 项目信息
 
-| 项 | 值 |
+- 项目目录：`BackDatabase/`，在仓库语境中简称 **back 项目**；负责实际执行数据库备份，并提供单实例配置管理 Web 服务。多实例集中管理属于 `BackDatabaseManageServer`，不要混改边界。
+- 技术形态：C# / `.NET 10`，`OutputType=Exe`；同一进程承载备份调度和 ASP.NET Core/Kestrel Web 服务。
+- 运行根目录固定为 `AppContext.BaseDirectory`（exe 所在目录），不是当前工作目录。`env.conf`、`config/`、`web/` 和相对备份目录都以此为基准。
+- 启动顺序：注册代码页支持 -> 加载 `env.conf` -> 加载 `config/*.conf` -> 创建推送、执行器和调度器 -> 启动每个配置的后台任务 -> 启动 Web 服务。没有有效 `.conf` 时只跳过备份任务，Web 仍需运行。
+- `env.conf` 是全局 JSON 配置，字段包括 `pushAddr`、`pushKey`、`pushHwid`、`pushGroup`、`webPassword`。缺失或解析失败不会阻断启动，而是回退为空配置。
+- 支持的数据库类型：`mysql`、`mariadb` 使用 `mysqldump`；`pgsql`、`postgres`、`postgresql` 使用 `pg_dump`。对应命令必须存在于运行机器的 `PATH`。
+- 调度模式：数字 `backtime > 0` 表示间隔分钟，启动后立即执行一次；`HH:mm` 表示每日 UTC 定点，约 40 秒轮询，同一天只执行一次。备份文件名时间戳同样使用 UTC。
+- Web 实际监听 `http://0.0.0.0:5080`。配置 `webPassword` 时使用 `HxSimpleWebAuth` 的 Bearer Token 认证；未配置口令时，受保护 API 仅允许回环来源访问，远程请求返回 403。
+- Web 只负责把配置写入磁盘，不热加载。新增、修改、删除任务配置或环境配置后必须重启进程才影响调度器。
+- 外部依赖采用 DLL `Reference`：`HxPushModel`、`HxPushSdk`、`HxSimpleWebAuth`。其 `HintPath` 依赖本机相邻仓库的固定目录布局。
+- 正式发布 profile 为 `win_x64` 和 `linux_amd64`：x64、self-contained、trimmed、非单文件。self-contained 只免除 .NET Runtime，不能替代数据库客户端工具。
+- 当前仓库没有自动化测试项目，也没有 `global.json`；构建机需安装 .NET 10 SDK。
+
+## 长期规则
+
+- 不得把路径基准从 `AppContext.BaseDirectory` 改成 `Environment.CurrentDirectory`，也不要让 `env.conf`、`config/`、`web/` 的定位依赖启动目录。
+- 保持配置启动快照语义，不擅自增加热加载。若需求明确要热加载，必须同时设计调度任务的增删改、并发和失败回滚。
+- 新增数据库类型必须实现 `IDatabaseBackupStrategy`，返回 `DumpCommand`，并在 `DatabaseBackupStrategyFactory.CreateDefault()` 注册；不要在 `BackupRunner` 中堆数据库类型分支。
+- 外部命令必须通过 `ProcessStartInfo.ArgumentList` 传参，不得拼接用户输入后交给 shell。`DisplayCommand` 和日志中的密码、Push Key、Web 口令必须脱敏。
+- 保持调度语义：间隔模式立即首跑；每日模式使用 UTC 且每日最多一次；取消时终止 dump 进程树、删除残缺文件，不重试、不发送失败通知。
+- 单个配置解析失败不得影响其他配置；单次备份异常不得终止调度循环；推送失败只记录日志，不得反向中断备份。
+- 备份失败时删除残缺 SQL，同一数据库只自动重试一次；重试仍失败或遇到不可重试的配置错误时才发送失败通知。
+- 清理顺序保持为：写新文件前先删 0 字节文件，再按 `LastWriteTimeUtc` 删除最旧文件。调整 `maxfiles` 行为前先看“已知问题”。
+- 失败推送正文顺序固定为：`备份失败 -> 数据库 -> 备份计划 -> 配置 -> 主机 -> 类型 -> 原因`，增删字段时不要擅自重排。
+- Web 的配置文件名、配置目录和保存目录边界校验不能弱化；机密字段只返回“是否已配置”，空值表示保留，清除必须显式指定。
+- Web 认证统一使用 `HxSimpleWebAuth`。宿主只负责 `HttpContext` / `HttpRequestData` 和 `ApiResponse` 的边界映射，不在 back 项目重新实现口令比较、Token、IP 绑定或锁定策略。
+- `webPassword` 为空时的回环限制是安全边界。若接入反向代理，必须明确可信代理和真实客户端 IP 规则，不能默认把代理的回环地址当成最终客户端。
+- 服务只提供 HTTP。需要远程管理时必须由防火墙限制来源，并在可信反向代理处终止 TLS；不要直接把 5080 暴露到不可信网络。
+- 保持半裁剪 JSON 策略：本项目类型优先使用 `AppJsonContext`；保留 `JsonSerializerIsReflectionEnabledByDefault=true` 及 `HxPushSdk`、`HxPushModel` 的 `TrimmerRootAssembly`，除非第三方反射路径已被完整替换和验证。
+- 发布后必须检查 `web/`、`config/*.example`、`env.conf.example`、`HxPushModel.dll`、`HxPushSdk.dll`、`HxSimpleWebAuth.dll` 是否在产物中，不能用旧发布目录覆盖新产物。
+- 修改配置格式、运行行为或部署方式时，同步更新根 `README.md`、样例配置和本文件。
+- 提交前至少执行：
+
+  ```powershell
+  dotnet build .\BackDatabase\BackDatabase.csproj -c Release
+  dotnet publish .\BackDatabase\BackDatabase.csproj -p:PublishProfile=win_x64
+  dotnet publish .\BackDatabase\BackDatabase.csproj -p:PublishProfile=linux_amd64
+  ```
+
+## 重要文件
+
+| 文件 | 职责 |
 |---|---|
-| 语言 / 运行时 | C# / .NET 10（`net10.0`） |
-| 项目类型 | Kestrel Web 宿主 + 备份调度（`OutputType=Exe`） |
-| 程序集名 | `BackDatabase` |
-| 版本字符串 | `3.1-net`（对齐原 Go 3.1） |
-| 本工程目录 | 本文件所在目录（`BackDatabase/`） |
-| 解决方案 | `../BackDatabase.slnx` |
-| 原版参考 | `../../backmysql/`（`main.go`、`config/*.conf`） |
-| 推送 SDK | `../../HxPush/HxPushSdk/`（csproj 以 DLL `Reference` 引用 Release 产物） |
+| `Program.cs` | 进程入口、根目录、加载顺序、对象装配、Kestrel 地址、停止联动 |
+| `Models/BackupConfig.cs` | 单任务配置模型、保存目录解析 |
+| `Models/ConfigLoader.cs` | `config/*.conf` 扫描、兼容格式解析、计划与默认值 |
+| `Models/EnvConfig.cs` | `env.conf` 数据模型、Web 认证是否启用 |
+| `utils/EnvConfigLoader.cs` | 启动时加载全局环境配置及失败回退 |
+| `utils/AppJsonContext.cs` | System.Text.Json 源生成与第三方反射回退配置 |
+| `Services/BackupScheduler.cs` | 每配置独立调度、间隔模式、每日 UTC 模式 |
+| `Services/BackupRunner.cs` | 文件清理、逐库备份、进程生命周期、重试、取消、失败通知时机 |
+| `Services/Strategies/IDatabaseBackupStrategy.cs` | 数据库策略接口和 `DumpCommand` 契约 |
+| `Services/Strategies/DatabaseBackupStrategyFactory.cs` | 数据库类型注册与解析入口 |
+| `Services/Strategies/MySqlBackupStrategy.cs` | MySQL / MariaDB 的 `mysqldump` 参数 |
+| `Services/Strategies/PgSqlBackupStrategy.cs` | PostgreSQL 的 `pg_dump` 参数与 `PGPASSWORD` |
+| `Services/PushNotifier.cs` | HxPush 初始化、失败消息格式、推送异常隔离 |
+| `web/ConfigWebService.cs` | Web 认证边界、配置 API、校验、机密保留、原子写入 |
+| `web/AppEntry.cs` | Web 发起的跨平台进程重启 |
+| `web/app.js` | 管理页面状态、Bearer Token、配置编辑和重启轮询 |
+| `BackDatabase.csproj` | 目标框架、裁剪策略、静态资源复制、外部 DLL 引用 |
+| `Properties/PublishProfiles/*.pubxml` | Windows/Linux 正式发布参数 |
 
-**边界：** 不内嵌数据库驱动做逻辑备份；提供仅监听本机的 Kestrel 配置管理 UI；不热加载配置（改 conf / env.conf 必须重启）。
+## 已知问题
 
----
+- 2026-07-31：正式发布产物启动时曾出现 `MissingMethodException`，缺少 `EndpointRouteBuilderExtensions.MapPost(..., RequestDelegate)`。异常位于 `ConfigWebService.Configure` 的认证路由注册；尚未完成发布产物级根因验证，后续修复必须用正式 profile 重新发布并直接启动产物验证，不能只以 `dotnet build` 通过为准。
+- 项目元数据版本为 `3.1.0`，`Program.cs` 启动日志仍硬编码输出 `1.5`，版本来源不一致。
+- 根 `README.md` 仍有过时内容：声称 Web 仅监听本机、遗漏 `webPassword`/`HxSimpleWebAuth`、数据库别名和 Web 重启能力。
+- `Properties/launchSettings.json` 使用 62569/62570，而程序硬编码 5080；IDE 自动打开地址可能不正确。
+- `env.conf.example` 当前示例口令为 `123`，但 Web 保存校验要求至少 6 位；启动加载器不会执行该长度校验。
+- `maxfiles` 不是写入完成后的严格上限：清理发生在本轮写文件之前，因此本轮结束后可能暂时超过上限。
+- 清理逻辑枚举保存目录中的所有文件，并删除其中所有 0 字节文件，而非只处理本程序生成的 `.sql`；不要与其他程序共享备份目录。
+- 手工 `.conf` 解析比 Web API 校验宽松：坏行可能被跳过、非法 `maxfiles` 回退 180、`HH:mm` 可接受多余分段；两条输入路径存在规则漂移。
+- `postgres`、`postgresql` 省略端口时会得到默认 3306，只有 `pgsql` 默认 5432。
+- 手工 `.conf` 的 `savedir` 只做规范化，可能通过 `..` 逃出程序目录；只有 Web API 保存路径会强制限制在程序目录内。
+- Web 监听所有网卡且只提供 HTTP；“记住访问口令”会把口令和 Token 明文写入浏览器 `localStorage`。远程部署必须额外做网络隔离和 TLS。
+- 构建依赖仓库外 DLL 的固定相对路径，干净机器或 CI 不会自动取得依赖。当前没有自动化测试覆盖调度、配置解析或 Web 认证。
 
-## 2. 目录与职责
+## 进度记录
 
-```
-BackDatabase/                         # 本工程（相对仓库根）
-  Program.cs                          # 入口：env.conf → 备份 conf → 调度 → Ctrl+C
-  env.conf.example                    # 全局 JSON 环境配置样例（复制为 env.conf）
-  Models/
-    BackupConfig.cs                   # 单 conf 对应的配置模型
-    ConfigLoader.cs                   # 解析 key=value .conf
-    EnvConfig.cs                      # env.conf JSON 模型（pushAddr/pushKey/pushHwid/pushGroup）
-  Utils/
-    EnvConfigLoader.cs                # 启动时加载 env.conf（非 model）
-    AppJsonContext.cs                 # STJ 源生成 + CreateOptions
-  Services/
-    BackupRunner.cs                   # 裁剪旧文件 + 调策略 + 起进程 + 重试 + 失败推送
-    BackupScheduler.cs                # 间隔分钟 / 每日 UTC 调度循环
-    PushNotifier.cs                   # HxPushSdk 封装；未配置则为空操作
-    Strategies/
-      IDatabaseBackupStrategy.cs      # 策略接口 + DumpCommand
-      DatabaseBackupStrategyFactory.cs# 按 dbType 注册/解析策略
-      MySqlBackupStrategy.cs          # mysql / mariadb → mysqldump
-      PgSqlBackupStrategy.cs          # pgsql / postgres / postgresql → pg_dump
-  config/
-    *.conf.example                    # 样例（不加载）
-    *.conf                            # 运行时配置（被加载；勿提交真实密码）
-  AGENTS.md                           # 本文件（Agent 向）
-```
-
-命名空间约定：
-
-- 配置模型：`BackDatabase.Config`（文件在 `Models/`）
-- 工具/加载器：`BackDatabase.Utils`（文件在 `Utils/`）
-- 服务：`BackDatabase.Services`
-- 策略：`BackDatabase.Services.Strategies`
-
-外部依赖：
-
-- `System.Text.Encoding.CodePages`：Windows 下 GBK 解码 dump 错误
-- `HxPushSdk` / `HxPushModel`：DLL 引用（见 csproj `HintPath`，相对本工程 `../../HxPush/...`）
-
----
-
-## 3. 运行时行为（改代码时必须保持）
-
-1. **根目录 = `AppContext.BaseDirectory`**（exe 目录），不是 `Environment.CurrentDirectory`。  
-   `env.conf`、`config/`、`savedir` 都相对该目录。
-2. **启动顺序**：先 `EnvConfigLoader.Load`（`env.conf`），再 `ConfigLoader.LoadAll`（`config/*.conf`）。
-3. **只加载 `config/*.conf`**，忽略 `*.example` / 其它扩展名。`env.conf.example` 也不加载。
-4. **每个 conf 一个后台 Task**，互不阻塞。
-5. **`backtime` 两种模式**（与 Go 一致）：
-   - 能解析为 `double` 且 `> 0` → 间隔分钟：先备份再 `Delay`，循环。
-   - 否则 `HH:mm` → 每日 **UTC** 定点；约 40 秒轮询；同一天只跑一次。
-6. **备份失败**：删残缺 `.sql`，同一库自动重试 **一次**；**重试仍失败**（或无法重试的配置错误）才走 `PushNotifier`。
-7. **清理顺序**：写新文件前先删 **0 字节空文件**，再按 `LastWriteTimeUtc` 删最旧直到 ≤ `maxfiles`。
-8. **文件名**：`{db}_{yyyy-MM-dd__HH.mm.ss}.sql`（UTC，点代替冒号，兼容 Windows）。
-9. **无任何 conf**：打印提示，不启动备份调度，但保持 Web 管理服务运行，允许创建配置。`env.conf` 缺失不阻断启动。
-10. **Ctrl+C**：`CancelKeyPress` 取消调度，优雅退出；取消过程中不发失败推送。
-11. **推送失败只打日志**，不得中断备份调度循环。
-
-配置键（兼容 Go conf，勿随意改名）：
-
-| 键 | 含义 |
-|---|---|
-| `dbType` | 策略标识：`mysql`/`mariadb`、`pgsql`/`postgres`/`postgresql` |
-| `backtime` | 间隔分钟 或 `HH:mm`（UTC） |
-| `host` `port` `user` `pwd` | 连接信息 |
-| `dbs` | 逗号分隔库名 |
-| `savedir` | 相对 exe 的保存路径 |
-| `maxfiles` | 最大保留文件数，默认 180 |
-
-`env.conf`（JSON）：
-
-| 字段 | 含义 |
-|---|---|
-| `pushAddr` | HxPush 服务地址（http/https 或 ws/wss，SDK 会规范化） |
-| `pushKey` | AppKey；与 pushAddr 都非空才启用推送 |
-| `pushHwid` | 可选设备 ID；为空则回退机器名 / `BackDatabase` |
-| `pushGroup` | 可选消息分组，对应 SDK 字段 `MsgGroup`；为空则 `default` |
-
----
-
-## 4. 架构要点：策略模式
-
-`BackupRunner` **禁止**再为数据库类型写 `switch` / 大段 `if`。  
-扩展新库必须走策略：
-
-```
-conf.dbType
-    → DatabaseBackupStrategyFactory.Resolve
-    → IDatabaseBackupStrategy.BuildCommand
-    → DumpCommand
-    → BackupRunner.RunProcess
-```
-
-### 新增数据库类型（检查清单）
-
-1. 在 `Services/Strategies/` 新增 `XxxBackupStrategy : IDatabaseBackupStrategy`。
-2. 实现 `SupportedDbTypes`（小写别名列表）与 `BuildCommand`。
-3. 在 `DatabaseBackupStrategyFactory.CreateDefault()` 中 `.Register(new XxxBackupStrategy())`。
-4. 更新 `README.md` 与本文件的 dbType 表。
-5. **不要**改 `BackupScheduler` 调度逻辑，除非需求明确要求。
-
-`DumpCommand` 字段约定：
-
-- `FileName` / `Arguments`：走 `Process.ArgumentList`，禁止拼 shell 字符串。
-- `ExtraEnvironment`：如 `PGPASSWORD`。
-- `RedirectStdoutToFile`：`true` = 工具写 stdout（mysqldump）；`false` = 工具自己写文件（pg_dump `--file`）。
-- `DisplayCommand`：日志用，**密码必须脱敏**（`***`）。
-
----
-
-## 5. 编码约定
-
-- **中文注释**：类、公开方法、关键分支保持中文说明（项目已采用）。
-- **Nullable / ImplicitUsings**：已开启；新代码遵循。
-- **风格**：与现有文件一致——小而清晰的 sealed 类、显式中文日志、少依赖。
-- **依赖**：尽量少第三方。当前：
-  - `System.Text.Encoding.CodePages`（GBK 解码 mysqldump 错误）
-  - 程序集引用 `HxPushSdk` / `HxPushModel`（备份失败推送）
-  新增 NuGet 需有明确理由。
-- **JSON / 半裁剪策略（强制约定）**：
-  - **目标**：发布体积小（`PublishTrimmed`）+ 第三方 DLL 仍可反射序列化。
-  - csproj 关键项：
-    - `TrimMode=partial`
-    - `JsonSerializerIsReflectionEnabledByDefault=true`（裁剪后仍允许 STJ 反射）
-    - `TrimmerRootAssembly`：`HxPushSdk`、`HxPushModel`（整库不裁元数据）
-  - 本项目已知类型登记在 `Utils/AppJsonContext.cs`；`EnvConfig` 用源生成 API。
-  - 注入 SDK 的 Options 用 `AppJsonContext.CreateOptions()`（源生成 + `DefaultJsonTypeInfoResolver` 回退）。
-  - 分析器 `EnableTrimAnalyzer` 开启；`CreateOptions`/PushNotifier 上对预期反射路径有 suppress。
-  - **不要**为了“更小”关掉 `JsonSerializerIsReflectionEnabledByDefault` 或去掉 TrimmerRoot，否则 HxPush 会再炸。
-  - 若彻底改掉第三方反射，可再收紧为纯源生成并去掉反射回退。
-- **安全**：
-  - 不要把真实密码 / pushKey 写进仓库、样例 conf、日志。
-  - `env.conf`、`config/*.conf` 已在 `.gitignore`；只提交 `*.example`。
-  - dump 参数用 `ArgumentList`，避免 shell 注入。
-  - 不要实现“根据用户输入执行任意 shell”。
-- **跨平台**：路径用 `Path.Combine` / `Path.GetFullPath`；`savedir` 先统一 `/` 再 `TrimStart('/')` 再拼接（见 `BackupConfig.ResolveSaveDir`）。
-- **时区**：调度与文件名时间戳一律 **UTC**（与 Go 原版一致）。若用户要本地时区，需显式需求再改，并写清文档。
-- **备份失败推送正文顺序（强制定序）**：`备份失败→数据库→备份计划→配置→主机→类型→原因`。改内容时只增删对应行，**不得调换行序**。
-
----
-
-## 6. 改动决策指南
-
-| 需求 | 改哪里 |
-|---|---|
-| 新数据库类型 | `Services/Strategies/*` + Factory 注册 |
-| 改 mysqldump/pg_dump 参数 | 对应 `*BackupStrategy` |
-| 改调度（间隔/每日） | `BackupScheduler` |
-| 改 conf 格式/新键 | `ConfigLoader` + `BackupConfig` + 样例 conf + README |
-| 改失败重试、删旧文件、失败推送时机 | `BackupRunner` |
-| 改推送内容/HxPush 字段 | `PushNotifier` + `EnvConfig`；**改失败 `msg` 时遵守第 5 节正文顺序规则** |
-| 改启动/退出 | `Program.cs` |
-| 用户文档 | 仓库根 `README.md` |
-| Agent 约定 | `AGENTS.md`（本文件） |
-
----
-
-## 7. 明确不要做的事
-
-- 不要把 `config/*.conf` / `env.conf`（含真实密码、pushKey）提交进 git。
-- 不要在 `BackupRunner` 里按数据库类型堆 `switch`。
-- 不要用 `UseShellExecute=true` 拼接用户可控命令。
-- 不要把路径基准改成 `Environment.CurrentDirectory`（会破坏部署习惯）。
-- 不要删除策略扩展点“顺便简化成 if-else”。
-- 不要在未要求时引入 DI 容器、Web 框架、后台 Windows Service 宿主——保持单 exe 控制台，除非用户明确要求。
-- 不要因推送失败中断备份调度；推送必须吞掉异常并打日志。
-
----
-
-## 8. 快速自检（提交前）
-
-- [ ] `dotnet build -c Release` 0 错误  
-- [ ] 新 dbType 已注册且 `SupportedDbTypes` 有别名  
-- [ ] 日志无明文密码 / 无明文 pushKey  
-- [ ] 中文注释覆盖新类/关键逻辑  
-- [ ] conf / env 样例与 README、AGENTS 已同步（若改了配置或行为）  
-- [ ] 未破坏：相对 exe 的 `config/` 与 `env.conf`、UTC 调度、失败重试一次、空文件+maxfiles 裁剪、失败推送  
+- 2026-07-31：按 Project Memory 模板重新梳理本文件，以当前源码为准补齐运行契约、Web 认证、发布要求和已知问题。
+- 2026-07-30：Web 认证迁移到 `HxSimpleWebAuth`，前端改用 Bearer Token，并保留 `/api/session` 兼容接口。
+- 当前已支持 MySQL、MariaDB 和 PostgreSQL 多个别名；数据库差异通过策略模块隔离。
+- 当前 Web 管理页支持配置 CRUD、环境配置、状态查询和进程内重启；配置写入后仍需重启才影响调度器。
