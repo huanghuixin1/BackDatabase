@@ -19,6 +19,7 @@ input:focus { border-color:var(--green); box-shadow:0 0 0 3px rgba(39,107,82,.12
 .warning { color:#80540d; background:#fff1d5; }
 .danger-link { border:0; padding:8px 0; color:var(--red); background:transparent; }
 .form-message { min-height:22px; color:var(--red); }
+.storage-hint { margin:-8px 0 16px; color:var(--muted); font-size:12px; }
 .app { display:flex; min-height:100vh; }
 .sidebar { width:240px; display:flex; flex-direction:column; padding:28px 18px; color:#e9f4ee; background:var(--green-dark); }
 .brand { display:flex; align-items:center; gap:10px; font-weight:700; line-height:1.15; }

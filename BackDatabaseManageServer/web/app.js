@@ -1,4 +1,5 @@
 const TOKEN_KEY = "backmanage_token";
+const PASSWORD_KEY = "backmanage_password";
 const state = { token: sessionStorage.getItem(TOKEN_KEY), nodes: [], selected: null, onlineTimer: null };
 
 const $ = (id) => document.getElementById(id);
@@ -37,6 +38,13 @@ function showLogin(message = "") {
   $("login-view").classList.remove("hidden");
   $("app").classList.add("hidden");
   $("login-message").textContent = message;
+  const savedPassword = localStorage.getItem(PASSWORD_KEY);
+  if (savedPassword) {
+    $("login-password").value = savedPassword;
+    $("remember-password").checked = true;
+  } else {
+    $("remember-password").checked = false;
+  }
 }
 
 function showApp() {
@@ -102,6 +110,14 @@ function stopOnlineRefresh() {
   state.onlineTimer = null;
 }
 
+function persistRememberedPassword(password) {
+  if ($("remember-password").checked) {
+    localStorage.setItem(PASSWORD_KEY, password);
+  } else {
+    localStorage.removeItem(PASSWORD_KEY);
+  }
+}
+
 async function addNode(event) {
   event.preventDefault();
   const message = $("node-message");
@@ -159,8 +175,21 @@ function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (char) => 
 
 $("login-form").addEventListener("submit", async (event) => {
   event.preventDefault(); $("login-message").textContent = "";
-  try { const result = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ key: $("login-password").value }) }); state.token = result.token; sessionStorage.setItem(TOKEN_KEY, state.token); $("login-password").value = ""; showApp(); await loadNodes(); }
+  const password = $("login-password").value;
+  try {
+    const result = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ key: password }) });
+    state.token = result.token;
+    sessionStorage.setItem(TOKEN_KEY, state.token);
+    persistRememberedPassword(password);
+    $("login-password").value = "";
+    showApp();
+    await loadNodes();
+  }
   catch (error) { $("login-message").textContent = error.message; }
+});
+
+$("remember-password").addEventListener("change", () => {
+  if (!$("remember-password").checked) localStorage.removeItem(PASSWORD_KEY);
 });
 
 $("logout-button").addEventListener("click", async () => { try { await api("/api/auth/logout", { method: "POST" }); } catch { } state.token = null; sessionStorage.removeItem(TOKEN_KEY); showLogin(); });
