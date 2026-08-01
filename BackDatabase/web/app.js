@@ -2,7 +2,8 @@ const state = {
   configs: [],
   editing: null,
   authenticated: false,
-  required: false
+  required: false,
+  autoSaveDir: false
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -231,6 +232,7 @@ function openDialog(config = null) {
     return;
   }
   state.editing = config?.fileName || null;
+  state.autoSaveDir = !config;
   form.reset();
   $('#dialog-title').textContent = config ? '编辑备份配置' : '新建备份配置';
   form.elements.fileName.disabled = Boolean(config);
@@ -373,6 +375,13 @@ form.elements.dbType.addEventListener('change', event => {
   if (form.elements.port.value === '3306' || form.elements.port.value === '5432')
     form.elements.port.value = event.target.value === 'pgsql' ? '5432' : '3306';
 });
+// 新建配置时，保存目录随配置名称自动填充为 /名称；用户手动改过保存目录后不再自动跟随
+form.elements.fileName.addEventListener('input', () => {
+  if (state.editing || !state.autoSaveDir) return;
+  const name = form.elements.fileName.value.trim();
+  form.elements.saveDir.value = name ? `/${name}` : '/backup/';
+});
+form.elements.saveDir.addEventListener('input', () => { state.autoSaveDir = false; });
 
 setInterval(() => $('#utc-clock').textContent = new Date().toISOString().slice(0, 19).replace('T', ' ') + ' UTC', 1000);
 
