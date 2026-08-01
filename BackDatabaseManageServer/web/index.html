@@ -66,8 +66,34 @@
       <div class="eyebrow">NODE DETAILS</div>
       <h3 id="details-title">节点详情</h3>
       <div class="detail-actions"><button id="detail-refresh" class="secondary" type="button">刷新状态</button><button id="detail-restart" class="warning" type="button">重启 back</button></div>
+      <div id="restart-required" class="restart-required hidden">备份任务已修改，需要重启 BackDatabase 后生效。</div>
       <h4>状态</h4><pre id="status-output" class="code-block">加载中…</pre>
-      <h4>配置</h4><pre id="configs-output" class="code-block">加载中…</pre>
+      <div class="task-heading"><h4>备份任务</h4><button id="add-task" class="primary compact" type="button">新增任务</button></div>
+      <div id="configs-output" class="task-list"><div class="empty compact-empty">加载中…</div></div>
+    </form>
+  </dialog>
+
+  <dialog id="task-dialog">
+    <form id="task-form" class="dialog-card">
+      <button id="task-close" class="dialog-close" type="button" aria-label="关闭">×</button>
+      <div class="eyebrow">BACKUP TASK</div>
+      <h3 id="task-dialog-title">新增备份任务</h3>
+      <div class="task-form-grid">
+        <label>配置名称<input id="task-file-name" required maxlength="64" placeholder="例如：production-db"></label>
+        <label>数据库类型<select id="task-db-type"><option value="mysql">MySQL</option><option value="mariadb">MariaDB</option><option value="pgsql">PostgreSQL</option></select></label>
+        <label>数据库主机<input id="task-host" required value="127.0.0.1"></label>
+        <label>端口<input id="task-port" required value="3306" inputmode="numeric"></label>
+        <label>用户名<input id="task-user" required value="root"></label>
+        <label>数据库密码<input id="task-password" type="password" autocomplete="new-password" placeholder="编辑时留空表示保留"></label>
+        <label class="check wide"><input id="task-clear-password" type="checkbox"> 清除现有数据库密码</label>
+        <label class="wide">数据库列表<input id="task-databases" required placeholder="多个数据库用英文逗号分隔"></label>
+        <label>备份计划<input id="task-backtime" required value="60" placeholder="分钟数或 UTC HH:mm"></label>
+        <label>最大保留数量<input id="task-max-files" type="number" required min="1" value="180"></label>
+        <label class="wide">保存目录<input id="task-save-dir" required value="/backup/"></label>
+      </div>
+      <p id="task-password-hint" class="storage-hint"></p>
+      <div class="form-actions"><button class="primary" type="submit">保存任务</button><button id="task-cancel" class="secondary" type="button">取消</button></div>
+      <p id="task-message" class="form-message" role="alert"></p>
     </form>
   </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

@@ -1,6 +1,6 @@
 const TOKEN_KEY = "backmanage_token";
 const PASSWORD_KEY = "backmanage_password";
-const state = { token: sessionStorage.getItem(TOKEN_KEY), nodes: [], selected: null, onlineTimer: null };
+const state = { token: sessionStorage.getItem(TOKEN_KEY), nodes: [], selected: null, configs: [], editingTask: null, onlineTimer: null };
 
 const $ = (id) => document.getElementById(id);
 
@@ -134,19 +134,136 @@ async function addNode(event) {
 
 async function openDetails(id) {
   const node = state.nodes.find((item) => item.id === id); if (!node) return;
-  state.selected = node; $("details-title").textContent = node.name; $("details-dialog").showModal(); await refreshDetails();
+  state.selected = node;
+  state.configs = [];
+  $("details-title").textContent = node.name;
+  $("restart-required").classList.add("hidden");
+  $("details-dialog").showModal();
+  await refreshDetails();
 }
 
 async function refreshDetails() {
   if (!state.selected) return;
-  $("status-output").textContent = "加载中…"; $("configs-output").textContent = "加载中…";
+  $("status-output").textContent = "加载中…";
+  $("configs-output").innerHTML = '<div class="empty compact-empty">加载中…</div>';
   try {
     const [status, configs] = await Promise.all([
       api(`/api/nodes/${state.selected.id}/status`), api(`/api/nodes/${state.selected.id}/configs`)
     ]);
     $("status-output").textContent = JSON.stringify(status, null, 2);
-    $("configs-output").textContent = JSON.stringify(configs, null, 2);
-  } catch (error) { $("status-output").textContent = error.message; $("configs-output").textContent = ""; }
+    state.configs = Array.isArray(configs) ? configs : [];
+    renderConfigs();
+  } catch (error) {
+    $("status-output").textContent = error.message;
+    $("configs-output").innerHTML = `<div class="empty compact-empty">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderConfigs() {
+  if (!state.configs.length) {
+    $("configs-output").innerHTML = '<div class="empty compact-empty">暂无备份任务</div>';
+    return;
+  }
+  $("configs-output").innerHTML = state.configs.map((config) => `
+    <article class="task-card">
+      <div>
+        <div class="task-card-title"><strong>${escapeHtml(config.fileName)}</strong><span class="pill">${escapeHtml(config.dbType)}</span></div>
+        ${config.error ? `<p class="form-message">${escapeHtml(config.error)}</p>` : `
+          <p>${escapeHtml(config.user)}@${escapeHtml(config.host)}:${escapeHtml(config.port)} · ${escapeHtml(config.databases)}</p>
+          <p>计划：${escapeHtml(config.backtime)} · 保留：${config.maxFiles} · 目录：${escapeHtml(config.saveDir)}</p>`}
+      </div>
+      <div class="task-actions">
+        <button class="secondary" type="button" data-task-action="edit" data-file-name="${escapeHtml(config.fileName)}" ${config.error ? "disabled" : ""}>编辑</button>
+        <button class="danger-link" type="button" data-task-action="delete" data-file-name="${escapeHtml(config.fileName)}">删除</button>
+      </div>
+    </article>`).join("");
+}
+
+function openTaskDialog(config = null) {
+  state.editingTask = config;
+  $("task-form").reset();
+  $("task-message").textContent = "";
+  $("task-dialog-title").textContent = config ? "编辑备份任务" : "新增备份任务";
+  $("task-file-name").readOnly = Boolean(config);
+  $("task-file-name").value = config?.fileName || "";
+  $("task-db-type").value = normalizeDbType(config?.dbType || "mysql");
+  $("task-host").value = config?.host || "127.0.0.1";
+  $("task-port").value = config?.port || "3306";
+  $("task-user").value = config?.user || "root";
+  $("task-password").value = "";
+  $("task-clear-password").checked = false;
+  $("task-databases").value = config?.databases || "";
+  $("task-backtime").value = config?.backtime || "60";
+  $("task-max-files").value = config?.maxFiles || 180;
+  $("task-save-dir").value = config?.saveDir || "/backup/";
+  $("task-password-hint").textContent = config
+    ? `数据库密码：${config.passwordConfigured ? "已配置；留空表示保留" : "未配置"}`
+    : "数据库密码可留空。";
+  $("task-dialog").showModal();
+}
+
+function closeTaskDialog() {
+  $("task-dialog").close();
+  state.editingTask = null;
+}
+
+function normalizeDbType(dbType) {
+  if (["postgres", "postgresql"].includes(dbType)) return "pgsql";
+  return dbType;
+}
+
+async function saveTask(event) {
+  event.preventDefault();
+  if (!state.selected) return;
+  $("task-message").textContent = "";
+  const fileName = $("task-file-name").value.trim();
+  const payload = {
+    fileName,
+    dbType: $("task-db-type").value,
+    host: $("task-host").value.trim(),
+    port: $("task-port").value.trim(),
+    user: $("task-user").value.trim(),
+    password: $("task-password").value || null,
+    clearPassword: $("task-clear-password").checked,
+    databases: $("task-databases").value.trim(),
+    backtime: $("task-backtime").value.trim(),
+    maxFiles: Number($("task-max-files").value),
+    saveDir: $("task-save-dir").value.trim()
+  };
+  try {
+    const editing = Boolean(state.editingTask);
+    const path = editing
+      ? `/api/nodes/${state.selected.id}/configs/${encodeURIComponent(state.editingTask.fileName)}`
+      : `/api/nodes/${state.selected.id}/configs`;
+    await api(path, { method: editing ? "PUT" : "POST", body: JSON.stringify(payload) });
+    closeTaskDialog();
+    markRestartRequired();
+    await loadConfigs();
+    showToast(editing ? "备份任务已更新" : "备份任务已创建");
+  } catch (error) {
+    $("task-message").textContent = error.message;
+  }
+}
+
+async function deleteTask(fileName) {
+  if (!state.selected || !confirm(`确定删除备份任务 ${fileName} 吗？`)) return;
+  try {
+    await api(`/api/nodes/${state.selected.id}/configs/${encodeURIComponent(fileName)}`, { method: "DELETE" });
+    markRestartRequired();
+    await loadConfigs();
+    showToast("备份任务已删除");
+  } catch (error) { showToast(error.message, true); }
+}
+
+async function loadConfigs() {
+  if (!state.selected) return;
+  const configs = await api(`/api/nodes/${state.selected.id}/configs`);
+  state.configs = Array.isArray(configs) ? configs : [];
+  renderConfigs();
+}
+
+function markRestartRequired() {
+  $("restart-required").classList.remove("hidden");
 }
 
 async function testNode(id) {
@@ -156,7 +273,7 @@ async function testNode(id) {
 
 async function restartNode(id) {
   if (!confirm("确定要重启这个 BackDatabase 节点吗？")) return;
-  try { await api(`/api/nodes/${id}/restart`, { method: "POST" }); $("last-action").textContent = "已请求重启"; showToast("已发送重启请求"); }
+  try { await api(`/api/nodes/${id}/restart`, { method: "POST" }); $("last-action").textContent = "已请求重启"; $("restart-required").classList.add("hidden"); showToast("已发送重启请求"); }
   catch (error) { showToast(error.message, true); }
 }
 
@@ -199,5 +316,16 @@ $("reset-node").addEventListener("click", () => $("node-form").reset());
 $("node-list").addEventListener("click", (event) => { const button = event.target.closest("button[data-action]"); if (!button) return; const id = button.dataset.id; const action = button.dataset.action; if (action === "details") openDetails(id); if (action === "test") testNode(id); if (action === "restart") restartNode(id); if (action === "delete") deleteNode(id); });
 $("detail-refresh").addEventListener("click", refreshDetails);
 $("detail-restart").addEventListener("click", () => state.selected && restartNode(state.selected.id));
+$("add-task").addEventListener("click", () => openTaskDialog());
+$("task-form").addEventListener("submit", saveTask);
+$("task-close").addEventListener("click", closeTaskDialog);
+$("task-cancel").addEventListener("click", closeTaskDialog);
+$("configs-output").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-task-action]");
+  if (!button) return;
+  const config = state.configs.find((item) => item.fileName === button.dataset.fileName);
+  if (button.dataset.taskAction === "edit" && config) openTaskDialog(config);
+  if (button.dataset.taskAction === "delete") deleteTask(button.dataset.fileName);
+});
 document.querySelectorAll("[data-scroll]").forEach((button) => button.addEventListener("click", () => document.getElementById(button.dataset.scroll).scrollIntoView({ behavior: "smooth" })));
 start();
