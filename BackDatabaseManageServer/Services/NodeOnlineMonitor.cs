@@ -36,15 +36,33 @@ public sealed class NodeOnlineMonitor(
     NodeOnlineStore onlineStore,
     BackNodeClient nodeClient) : BackgroundService
 {
-    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan Interval = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(3);
     private readonly ConcurrentDictionary<Guid, string> _authenticationFailures = new();
+
+    public Task RefreshAllAsync(CancellationToken cancellationToken = default) =>
+        ProbeAllAsync(cancellationToken, force: true);
+
+    public async Task<bool> RefreshNodeAsync(Guid nodeId, CancellationToken cancellationToken = default)
+    {
+        var node = nodeStore.Find(nodeId);
+        if (node is null)
+            return false;
+        if (!node.Enabled)
+        {
+            onlineStore.Remove(nodeId);
+            return true;
+        }
+
+        await ProbeAsync(node, cancellationToken, force: true);
+        return true;
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            await ProbeAllAsync(stoppingToken);
+            await ProbeAllAsync(stoppingToken, force: false);
             try
             {
                 await Task.Delay(Interval, stoppingToken);
@@ -56,18 +74,19 @@ public sealed class NodeOnlineMonitor(
         }
     }
 
-    private async Task ProbeAllAsync(CancellationToken stoppingToken)
+    private async Task ProbeAllAsync(CancellationToken stoppingToken, bool force)
     {
         var nodes = nodeStore.List();
         var enabledNodes = nodes.Where(node => node.Enabled).ToArray();
         onlineStore.RemoveExcept(enabledNodes.Select(node => node.Id));
-        await Task.WhenAll(enabledNodes.Select(node => ProbeAsync(node, stoppingToken)));
+        await Task.WhenAll(enabledNodes.Select(node => ProbeAsync(node, stoppingToken, force)));
     }
 
-    private async Task ProbeAsync(BackNode node, CancellationToken stoppingToken)
+    private async Task ProbeAsync(BackNode node, CancellationToken stoppingToken, bool force)
     {
         var credentialFingerprint = GetCredentialFingerprint(node);
-        if (_authenticationFailures.TryGetValue(node.Id, out var failedFingerprint)
+        if (!force
+            && _authenticationFailures.TryGetValue(node.Id, out var failedFingerprint)
             && failedFingerprint == credentialFingerprint)
         {
             return;

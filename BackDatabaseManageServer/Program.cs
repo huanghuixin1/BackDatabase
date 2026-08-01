@@ -14,7 +14,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton(nodeStore);
 builder.Services.AddHttpClient<BackNodeClient>();
 builder.Services.AddSingleton<NodeOnlineStore>();
-builder.Services.AddHostedService<NodeOnlineMonitor>();
+builder.Services.AddSingleton<NodeOnlineMonitor>();
+builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<NodeOnlineMonitor>());
 var app = builder.Build();
 
 var webDirectory = Path.Combine(baseDirectory, "web");
@@ -83,6 +84,20 @@ app.MapPost("/api/auth/logout", async (HttpContext context) =>
 
 app.MapGet("/api/nodes", (NodeOnlineStore onlineStore) =>
     nodeStore.List().Select(node => ToView(node, onlineStore.Get(node.Id))));
+
+app.MapPost("/api/nodes/refresh", async (NodeOnlineMonitor monitor, NodeOnlineStore onlineStore, CancellationToken cancellationToken) =>
+{
+    await monitor.RefreshAllAsync(cancellationToken);
+    return Results.Ok(nodeStore.List().Select(node => ToView(node, onlineStore.Get(node.Id))));
+});
+
+app.MapPost("/api/nodes/{id:guid}/refresh", async (Guid id, NodeOnlineMonitor monitor, NodeOnlineStore onlineStore, CancellationToken cancellationToken) =>
+{
+    if (!await monitor.RefreshNodeAsync(id, cancellationToken))
+        return Results.NotFound(new { message = "节点不存在。" });
+    var node = nodeStore.Find(id)!;
+    return Results.Ok(ToView(node, onlineStore.Get(id)));
+});
 
 app.MapPost("/api/nodes", (BackNodeWriteRequest request) =>
 {

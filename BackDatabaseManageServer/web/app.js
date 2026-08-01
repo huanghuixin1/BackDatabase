@@ -1,6 +1,6 @@
 const TOKEN_KEY = "backmanage_token";
 const PASSWORD_KEY = "backmanage_password";
-const state = { token: sessionStorage.getItem(TOKEN_KEY), nodes: [], selected: null, configs: [], editingTask: null, onlineTimer: null };
+const state = { token: sessionStorage.getItem(TOKEN_KEY), nodes: [], selected: null, configs: [], editingTask: null, onlineTimer: null, refreshingAll: false };
 
 const $ = (id) => document.getElementById(id);
 
@@ -72,7 +72,7 @@ function renderNodes() {
       <p class="node-meta">${onlineDescription(node)}</p>
       <div class="node-actions">
         <button class="secondary" data-action="details" data-id="${node.id}">查看</button>
-        <button class="secondary" data-action="test" data-id="${node.id}">测试连接</button>
+        <button class="secondary" data-action="refresh" data-id="${node.id}" ${state.refreshingAll ? "disabled" : ""}>${state.refreshingAll ? "刷新中…" : "刷新状态"}</button>
         <button class="warning" data-action="restart" data-id="${node.id}">重启</button>
         <button class="danger-link" data-action="delete" data-id="${node.id}">删除</button>
       </div>
@@ -101,7 +101,7 @@ function startOnlineRefresh() {
   if (state.onlineTimer) return;
   state.onlineTimer = setInterval(() => {
     loadNodes().catch((error) => console.warn("刷新节点在线状态失败", error));
-  }, 5000);
+  }, 180000);
 }
 
 function stopOnlineRefresh() {
@@ -266,9 +266,43 @@ function markRestartRequired() {
   $("restart-required").classList.remove("hidden");
 }
 
-async function testNode(id) {
-  try { await api(`/api/nodes/${id}/status`); $("last-action").textContent = "连接正常"; showToast("节点连接正常"); }
-  catch (error) { $("last-action").textContent = "连接失败"; showToast(error.message, true); }
+async function refreshNode(id, button = null) {
+  setButtonBusy(button, true, "刷新中…");
+  try {
+    const refreshed = await api(`/api/nodes/${id}/refresh`, { method: "POST" });
+    const index = state.nodes.findIndex((node) => node.id === id);
+    if (index >= 0) state.nodes[index] = refreshed;
+    renderNodes();
+    $("last-action").textContent = refreshed.online ? "节点在线" : "节点离线";
+    showToast(refreshed.online ? "节点在线状态已刷新" : `节点离线：${refreshed.onlineError || "连接失败"}`, !refreshed.online);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setButtonBusy(button, false, "刷新状态");
+  }
+}
+
+async function refreshAllNodes(button = null) {
+  if (state.refreshingAll) return;
+  state.refreshingAll = true;
+  setButtonBusy(button, true, "刷新中…");
+  renderNodes();
+  try {
+    state.nodes = await api("/api/nodes/refresh", { method: "POST" });
+    showToast("全部节点状态已刷新");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    state.refreshingAll = false;
+    renderNodes();
+    setButtonBusy(button, false, "刷新全部节点");
+  }
+}
+
+function setButtonBusy(button, busy, text) {
+  if (!button) return;
+  button.disabled = busy;
+  button.textContent = text;
 }
 
 async function restartNode(id) {
@@ -310,10 +344,10 @@ $("remember-password").addEventListener("change", () => {
 });
 
 $("logout-button").addEventListener("click", async () => { try { await api("/api/auth/logout", { method: "POST" }); } catch { } state.token = null; sessionStorage.removeItem(TOKEN_KEY); showLogin(); });
-$("refresh-button").addEventListener("click", () => loadNodes().then(() => showToast("列表已刷新")).catch((error) => showToast(error.message, true)));
+$("refresh-button").addEventListener("click", (event) => refreshAllNodes(event.currentTarget));
 $("node-form").addEventListener("submit", addNode);
 $("reset-node").addEventListener("click", () => $("node-form").reset());
-$("node-list").addEventListener("click", (event) => { const button = event.target.closest("button[data-action]"); if (!button) return; const id = button.dataset.id; const action = button.dataset.action; if (action === "details") openDetails(id); if (action === "test") testNode(id); if (action === "restart") restartNode(id); if (action === "delete") deleteNode(id); });
+$("node-list").addEventListener("click", (event) => { const button = event.target.closest("button[data-action]"); if (!button) return; const id = button.dataset.id; const action = button.dataset.action; if (action === "details") openDetails(id); if (action === "refresh") refreshNode(id, button); if (action === "restart") restartNode(id); if (action === "delete") deleteNode(id); });
 $("detail-refresh").addEventListener("click", refreshDetails);
 $("detail-restart").addEventListener("click", () => state.selected && restartNode(state.selected.id));
 $("add-task").addEventListener("click", () => openTaskDialog());
