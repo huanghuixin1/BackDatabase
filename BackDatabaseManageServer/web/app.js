@@ -118,6 +118,18 @@ function persistRememberedPassword(password) {
   }
 }
 
+function openNodeDialog() {
+  $("node-form").reset();
+  $("node-enabled").checked = true;
+  $("node-message").textContent = "";
+  $("node-dialog").showModal();
+  $("node-name").focus();
+}
+
+function closeNodeDialog() {
+  $("node-dialog").close();
+}
+
 async function addNode(event) {
   event.preventDefault();
   const message = $("node-message");
@@ -127,8 +139,8 @@ async function addNode(event) {
       name: $("node-name").value.trim(), baseUrl: $("node-url").value.trim(),
       webPassword: $("node-password").value, enabled: $("node-enabled").checked
     }) });
-    $("node-form").reset(); $("node-enabled").checked = true;
-    await loadNodes(); showToast("节点已添加"); window.scrollTo({ top: 0, behavior: "smooth" });
+    closeNodeDialog();
+    await loadNodes(); showToast("节点已添加");
   } catch (error) { message.textContent = error.message; }
 }
 
@@ -345,8 +357,11 @@ $("remember-password").addEventListener("change", () => {
 
 $("logout-button").addEventListener("click", async () => { try { await api("/api/auth/logout", { method: "POST" }); } catch { } state.token = null; sessionStorage.removeItem(TOKEN_KEY); showLogin(); });
 $("refresh-button").addEventListener("click", (event) => refreshAllNodes(event.currentTarget));
+$("add-node-button").addEventListener("click", openNodeDialog);
+$("nav-add-node").addEventListener("click", openNodeDialog);
 $("node-form").addEventListener("submit", addNode);
 $("reset-node").addEventListener("click", () => $("node-form").reset());
+$("node-close").addEventListener("click", closeNodeDialog);
 $("node-list").addEventListener("click", (event) => { const button = event.target.closest("button[data-action]"); if (!button) return; const id = button.dataset.id; const action = button.dataset.action; if (action === "details") openDetails(id); if (action === "refresh") refreshNode(id, button); if (action === "restart") restartNode(id); if (action === "delete") deleteNode(id); });
 $("detail-refresh").addEventListener("click", refreshDetails);
 $("detail-restart").addEventListener("click", () => state.selected && restartNode(state.selected.id));

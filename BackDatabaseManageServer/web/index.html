@@ -25,7 +25,7 @@
       <div class="brand"><span class="brand-mark">B</span><span>BackDatabase<br><small>Manage Server</small></span></div>
       <nav>
         <button class="nav-item active" data-scroll="overview">节点概览</button>
-        <button class="nav-item" data-scroll="add-node">添加节点</button>
+        <button id="nav-add-node" class="nav-item">添加节点</button>
       </nav>
       <button id="logout-button" class="sidebar-action">退出登录</button>
     </aside>
@@ -33,7 +33,10 @@
     <main class="main">
       <header class="topbar">
         <div><div class="eyebrow">SERVER CONSOLE</div><h2>节点概览</h2></div>
-        <button id="refresh-button" class="secondary">刷新全部节点</button>
+        <div class="topbar-actions">
+          <button id="add-node-button" class="primary">添加节点</button>
+          <button id="refresh-button" class="secondary">刷新全部节点</button>
+        </div>
       </header>
 
       <section id="overview" class="section">
@@ -46,17 +49,6 @@
         <div id="node-empty" class="empty hidden">还没有节点，先添加一台 BackDatabase。</div>
       </section>
 
-      <section id="add-node" class="section add-section">
-        <div class="section-heading"><div><div class="eyebrow">REGISTRATION</div><h3>添加 BackDatabase 节点</h3></div></div>
-        <form id="node-form" class="form-card">
-          <label>节点名称<input id="node-name" required maxlength="80" placeholder="例如：生产库 01"></label>
-          <label>Back 地址<input id="node-url" type="url" required placeholder="https://back-01.example.internal"></label>
-          <label>Web 口令<input id="node-password" type="password" required minlength="6" autocomplete="new-password"></label>
-          <label class="check"><input id="node-enabled" type="checkbox" checked> 启用节点</label>
-          <div class="form-actions"><button class="primary" type="submit">保存节点</button><button id="reset-node" class="secondary" type="button">清空</button></div>
-          <p id="node-message" class="form-message" role="alert"></p>
-        </form>
-      </section>
     </main>
   </div>
 
@@ -96,6 +88,21 @@
       <p id="task-message" class="form-message" role="alert"></p>
     </form>
   </dialog>
+
+  <dialog id="node-dialog">
+    <form id="node-form" class="dialog-card">
+      <button id="node-close" class="dialog-close" type="button" aria-label="关闭">×</button>
+      <div class="eyebrow">REGISTRATION</div>
+      <h3>添加 BackDatabase 节点</h3>
+      <label>节点名称<input id="node-name" required maxlength="80" placeholder="例如：生产库 01"></label>
+      <label>Back 地址<input id="node-url" type="url" required placeholder="https://back-01.example.internal"></label>
+      <label>Web 口令<input id="node-password" type="password" required minlength="6" autocomplete="new-password"></label>
+      <label class="check"><input id="node-enabled" type="checkbox" checked> 启用节点</label>
+      <div class="form-actions"><button class="primary" type="submit">保存节点</button><button id="reset-node" class="secondary" type="button">清空</button></div>
+      <p id="node-message" class="form-message" role="alert"></p>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/app.js"></script>
 </body>
