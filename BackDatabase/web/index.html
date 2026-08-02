@@ -116,7 +116,7 @@
         <label class="field wide"><span>数据库</span><input name="databases" required placeholder="app, analytics"><small>多个数据库使用英文逗号分隔</small></label>
         <label class="field"><span>备份计划</span><input name="backtime" required value="60"><small>分钟数，或每日 UTC 时刻 HH:mm</small></label>
         <label class="field"><span>最大保留数量</span><input name="maxFiles" type="number" min="1" required value="180"></label>
-        <label class="field wide"><span>保存目录</span><input name="saveDir" required value="/backup/"><small>相对于程序目录，例如 /backup/</small></label>
+        <label class="field wide"><span>保存目录</span><input name="saveDir" required value="/backup/"><small>相对于程序目录，例如 /backup/</small><small id="disk-info" class="disk-info" hidden></small></label>
       </div>
       <div class="dialog-actions"><button class="ghost" type="button" id="cancel-dialog">取消</button><button class="primary" type="submit">保存配置</button></div>
     </form>

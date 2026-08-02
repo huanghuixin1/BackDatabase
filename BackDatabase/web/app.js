@@ -131,6 +131,42 @@ async function loadConfigs() {
   } catch (error) { toast(error.message, true); }
 }
 
+// ==================== 磁盘空间 ====================
+
+// 格式化字节数为可读字符串
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return (bytes / Math.pow(1024, i)).toFixed(i > 1 ? 2 : 0) + ' ' + units[i];
+}
+
+let diskInfoTimer = null;
+
+// 监听保存目录输入，延迟查询对应盘符的空间信息
+form.elements.saveDir.addEventListener('input', () => {
+  const dir = form.elements.saveDir.value.trim();
+  clearTimeout(diskInfoTimer);
+  if (!dir) { $('#disk-info').hidden = true; return; }
+  diskInfoTimer = setTimeout(() => fetchDiskInfo(dir), 350);
+});
+
+async function fetchDiskInfo(dir) {
+  const infoEl = $('#disk-info');
+  try {
+    const info = await api(`/api/disk?path=${encodeURIComponent(dir)}`);
+    infoEl.hidden = false;
+    infoEl.textContent =
+      `${info.driveName} 可用 ${formatBytes(info.freeBytes)} / 总计 ${formatBytes(info.totalBytes)}`;
+    infoEl.classList.remove('disk-warn', 'disk-danger');
+    // 可用空间低于 5GB 标橙色，低于 1GB 标红色
+    if (info.freeBytes < 1024 * 1024 * 1024) infoEl.classList.add('disk-danger');
+    else if (info.freeBytes < 5 * 1024 * 1024 * 1024) infoEl.classList.add('disk-warn');
+  } catch {
+    infoEl.hidden = true;
+  }
+}
+
 // ==================== 登录相关 ====================
 
 // 把指定视图切换为唯一可见，并同步顶栏标题与按钮
@@ -251,6 +287,11 @@ function openDialog(config = null) {
     ? '已保存密码；留空将保留，勾选下方选项可清除。'
     : '当前未配置密码。';
   dialog.showModal();
+  // 打开对话框时立即加载一次磁盘空间信息
+  setTimeout(() => {
+    const dir = form.elements.saveDir.value.trim();
+    if (dir) fetchDiskInfo(dir);
+  }, 50);
 }
 
 async function saveConfig(event) {

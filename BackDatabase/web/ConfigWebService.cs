@@ -142,6 +142,10 @@ public static partial class ConfigWebService
         app.MapPut("/api/environment", (EnvironmentWriteRequest request) =>
             ApiCall(() => store.SaveEnvironment(request)));
 
+        // 查询保存目录所在盘符的硬盘空间：saveDir 是相对程序目录的路径，
+        // 盘符由程序所在盘决定；前端在新建/编辑配置时实时展示可用空间。
+        app.MapGet("/api/disk", (string? path) => ApiCall(() => store.GetDiskInfo(path)));
+
         app.MapGet("/api/status", () => Results.Ok(new
         {
             service = "BackDatabase",
@@ -342,6 +346,69 @@ public static partial class ConfigWebService
             {
                 throw new ConfigValidationException($"env.conf 格式错误: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// 查询指定保存目录所在盘符的可用空间。saveDir 是相对程序目录的路径
+        /// （形如 /backup/ 或 backup/）；解析到实际目录后返回所在盘符与空间信息。
+        /// path 为空或非法时回落到程序根目录所在盘。
+        /// </summary>
+        public DiskInfoView GetDiskInfo(string? path)
+        {
+            string target;
+            try
+            {
+                var relative = (path ?? "").Replace('\\', '/').TrimStart('/');
+                target = Path.GetFullPath(Path.Combine(_baseDir, relative));
+            }
+            catch
+            {
+                target = _baseDir;
+            }
+
+            var rootPath = Path.GetPathRoot(target);
+            if (string.IsNullOrEmpty(rootPath) || !Directory.Exists(rootPath))
+            {
+                rootPath = Path.GetPathRoot(_baseDir);
+            }
+            if (string.IsNullOrEmpty(rootPath) || !Directory.Exists(rootPath))
+            {
+                throw new ConfigValidationException("无法确定保存目录所在的盘符。");
+            }
+
+            rootPath = Path.GetFullPath(rootPath);
+            var comparison = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+
+            // 在所有已挂载盘符中找到包含该根目录的那个（Windows 为盘符，Linux 为挂载点）。
+            DriveInfo? drive = null;
+            foreach (var d in DriveInfo.GetDrives())
+            {
+                try
+                {
+                    if (!d.IsReady) continue;
+                    if (rootPath.StartsWith(d.Name, comparison))
+                    {
+                        drive = d;
+                        break;
+                    }
+                }
+                catch { /* 某些盘符可能不可访问，跳过 */ }
+            }
+
+            if (drive is null || !drive.IsReady)
+            {
+                throw new ConfigValidationException($"盘符 {rootPath} 未就绪，无法读取空间信息。");
+            }
+
+            return new DiskInfoView
+            {
+                Root = rootPath,
+                DriveName = drive.Name,
+                TotalBytes = drive.TotalSize,
+                FreeBytes = drive.AvailableFreeSpace,
+            };
         }
 
         public object SaveEnvironment(EnvironmentWriteRequest request)
@@ -577,6 +644,19 @@ public sealed class EnvironmentView
     public string PushGroup { get; init; } = "";
     public bool PushKeyConfigured { get; init; }
     public bool WebPasswordConfigured { get; init; }
+}
+
+/// <summary>保存目录所在盘符的空间信息（用于配置界面实时展示）。</summary>
+public sealed class DiskInfoView
+{
+    /// <summary>盘符根路径，例如 C:\ 或 /。</summary>
+    public string Root { get; init; } = "";
+    /// <summary>盘符名称，Windows 形如 C:\，Linux 形如 / 或挂载点。</summary>
+    public string DriveName { get; init; } = "";
+    /// <summary>盘符总容量（字节）。</summary>
+    public long TotalBytes { get; init; }
+    /// <summary>盘符当前可用空间（字节）。</summary>
+    public long FreeBytes { get; init; }
 }
 
 public sealed class EnvironmentWriteRequest
