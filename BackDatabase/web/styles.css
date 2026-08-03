@@ -52,6 +52,15 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-family: Georgia, serif;
 .config-card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; box-shadow: 0 7px 24px rgba(25,56,43,.04); }.config-card.error { border-color: #e5b4b4; }.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }.card-head h3 { margin: 0; font-size: 17px; }.card-head small { display: block; color: var(--muted); margin-top: 5px; }.type-badge, .pill { padding: 5px 8px; border-radius: 999px; background: var(--green-soft); color: var(--green-dark); font-size: 10px; font-weight: 850; text-transform: uppercase; letter-spacing: .05em; }
 .details { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 22px 0; }.detail span, .detail strong { display: block; }.detail span { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }.detail strong { margin-top: 5px; font-size: 13px; overflow-wrap: anywhere; }
 .card-actions { display: flex; gap: 8px; padding-top: 15px; border-top: 1px solid var(--line); }.card-actions button { flex: 1; }.danger { color: var(--red); }
+.run-badge { display: inline-block; margin-left: auto; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 800; letter-spacing: .04em; align-self: center; }
+.run-badge.idle { background: #eef2f0; color: var(--muted); }
+.run-badge.running { background: var(--amber-soft); color: var(--amber); animation: runpulse 1.2s ease-in-out infinite; }
+.run-badge.success { background: var(--green-soft); color: var(--green-dark); }
+.run-badge.failed { background: #f7e3e3; color: var(--red); }
+@keyframes runpulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+.primary-ghost { color: var(--green); border-color: var(--green); background: white; }.primary-ghost:hover:not(:disabled) { background: var(--green-soft); }.primary-ghost:disabled { opacity: .5; cursor: not-allowed; }
+.run-log { grid-column: 1 / -1; margin: 0; padding: 12px 14px; background: #0f1f18; color: #cfe8de; font: 11px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace; border-radius: 10px; max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.run-log[hidden] { display: none; }
 .empty { text-align: center; padding: 60px 20px; border: 1px dashed #b9c7bf; border-radius: 14px; background: rgba(255,255,255,.45); }.empty-icon { font-size: 36px; color: var(--green); }.empty p { color: var(--muted); }
 .form-card { background: white; border: 1px solid var(--line); border-radius: 14px; padding: 26px; box-shadow: var(--shadow); }.environment-card { max-width: 820px; }.pill { align-self: center; }.pill.enabled { background: var(--green-soft); }.environment-card form, .dialog-body { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .field { display: block; }.field.wide, .checkbox.wide, .form-actions.wide { grid-column: 1 / -1; }.field > span { display: block; margin-bottom: 7px; font-size: 12px; font-weight: 750; }.field small { display: block; color: var(--muted); margin-top: 6px; font-size: 11px; }

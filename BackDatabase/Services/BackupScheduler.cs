@@ -78,7 +78,10 @@ public sealed class BackupScheduler
             {
                 try
                 {
-                    _runner.Run(config, cancellationToken: ct);
+                    // 跳过与手动立即备份互斥：该配置已在跑时 RunAsync 返回 false
+                    var ran = await _runner.RunAsync(config, "schedule", ct).ConfigureAwait(false);
+                    if (!ran)
+                        Console.WriteLine($"[{name}] 跳过本轮备份：已有备份正在运行");
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
@@ -117,7 +120,9 @@ public sealed class BackupScheduler
                     lastRunDate = today;
                     try
                     {
-                        _runner.Run(config, cancellationToken: ct);
+                        var ran = await _runner.RunAsync(config, "schedule", ct).ConfigureAwait(false);
+                        if (!ran)
+                            Console.WriteLine($"[{name}] 跳过本次备份：已有备份正在运行");
                     }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested)
                     {

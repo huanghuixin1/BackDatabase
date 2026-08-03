@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using BackDatabase.Config;
+using BackDatabase.Services;
 using BackDatabase.Utils;
 using HxSimpleWebAuth;
 using Microsoft.Extensions.FileProviders;
@@ -33,7 +34,8 @@ public static partial class ConfigWebService
         "AOT",
         "IL3050",
         Justification = "项目不发布 NativeAOT；Minimal API 路由允许使用运行时代码生成。")]
-    public static void Configure(WebApplication app, string baseDir, string configDir, string? webPassword = null)
+    public static void Configure(WebApplication app, string baseDir, string configDir, string? webPassword = null,
+        BackupRunner? runner = null, BackupRunRegistry? runRegistry = null)
     {
         var store = new ConfigFileStore(baseDir, configDir);
         var authRequired = !string.IsNullOrEmpty(webPassword);
@@ -137,6 +139,56 @@ public static partial class ConfigWebService
             ApiCall(() => store.Save(request, fileName)));
         app.MapDelete("/api/configs/{fileName}", (string fileName) =>
             ApiCall(() => store.Delete(fileName)));
+
+        // 立即备份：从磁盘读取最新 .conf 后执行一次，不影响调度器。
+        // 已有备份在跑时回 409，避免同配置并发。
+        app.MapPost("/api/configs/{fileName}/backup", (string fileName) =>
+        {
+            if (runner is null || runRegistry is null)
+                return Results.Problem("备份执行器未配置。", statusCode: 500);
+            try
+            {
+                var config = store.LoadConfig(fileName);
+                // 后台执行：RunAsync 内部会自行 BeginRun/FinishRun（取锁、记状态、写日志、释放），
+                // 返回 false 表示该配置已有备份在跑——回 409，不再重复取锁/释放。
+                // 后台执行，不阻塞 HTTP 响应
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var ran = await runner.RunAsync(config, "manual", cancellationToken: default);
+                        if (!ran)
+                        {
+                            // 已有备份在跑：这里不回 HTTP（响应已发出），打日志即可
+                            Console.WriteLine($"[{Path.GetFileName(config.SourceFile)}] 立即备份跳过：已有备份在运行");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"立即备份异常: {ex.Message}");
+                    }
+                });
+                return Results.Ok(new { message = "已开始备份，请查看运行状态。" });
+            }
+            catch (FileNotFoundException ex)
+            {
+                return Results.NotFound(new { message = ex.Message });
+            }
+            catch (ConfigValidationException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        });
+
+        // 查询所有配置最新运行状态
+        app.MapGet("/api/runs", () =>
+            runRegistry is null
+                ? Results.Ok(Array.Empty<BackupRunView>())
+                : Results.Ok(runRegistry.GetAllViews()));
+
+        // 查询单个配置最新运行状态
+        app.MapGet("/api/runs/{fileName}", (string fileName) =>
+            Results.Ok(runRegistry?.GetView(fileName) ?? new BackupRunView { FileName = fileName }));
 
         app.MapGet("/api/environment", () => ApiCall(store.GetEnvironment));
         app.MapPut("/api/environment", (EnvironmentWriteRequest request) =>
@@ -321,6 +373,19 @@ public static partial class ConfigWebService
             }
 
             return new { message = "配置已删除，重启 BackDatabase 后生效。" };
+        }
+
+        /// <summary>
+        /// 从磁盘读取最新 .conf 为 <see cref="BackupConfig"/>。
+        /// 用于立即备份等需要「读最新配置」的场景（保存后未重启也能跑到最新）。
+        /// </summary>
+        public BackupConfig LoadConfig(string routeFileName)
+        {
+            var fileName = NormalizeFileName(routeFileName);
+            var path = ResolveConfigPath(fileName);
+            if (!File.Exists(path))
+                throw new FileNotFoundException($"配置 {fileName} 不存在。");
+            return ConfigLoader.ParseFile(path);
         }
 
         public EnvironmentView GetEnvironment()

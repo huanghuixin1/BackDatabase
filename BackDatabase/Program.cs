@@ -34,8 +34,11 @@ if (configs.Count == 0)
 // 备份失败推送（env 未配 pushAddr/pushKey 时内部为空操作）
 using var pushNotifier = new PushNotifier(env);
 
+// 备份运行注册表：记录每个配置最近一次运行的状态与日志，供 Web 展示
+var runRegistry = new BackupRunRegistry();
+
 // 备份执行器：真正调用 mysqldump / pg_dump
-var runner = new BackupRunner(baseDir, pushNotifier: pushNotifier);
+var runner = new BackupRunner(baseDir, pushNotifier: pushNotifier, registry: runRegistry);
 // 调度器：按间隔分钟或每日 UTC 时刻循环触发
 var scheduler = new BackupScheduler(runner);
 
@@ -48,7 +51,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls(webUrls);
 var app = builder.Build();
 
-ConfigWebService.Configure(app, baseDir, configDir, env.WebPassword);
+ConfigWebService.Configure(app, baseDir, configDir, env.WebPassword, runner, runRegistry);
 
 // Ctrl+C / SIGTERM 由 Kestrel 宿主统一处理，并同步停止原有备份调度。
 app.Lifetime.ApplicationStopping.Register(() =>

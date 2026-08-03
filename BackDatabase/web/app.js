@@ -1,5 +1,7 @@
 const state = {
   configs: [],
+  runs: {},
+  expandedLogs: new Set(),
   editing: null,
   authenticated: false,
   required: false,
@@ -115,19 +117,126 @@ function renderConfigs() {
     const edit = document.createElement('button');
     edit.className = 'ghost'; edit.textContent = '编辑'; edit.disabled = Boolean(config.error);
     edit.addEventListener('click', () => openDialog(config));
+    const runNow = document.createElement('button');
+    runNow.className = 'ghost primary-ghost'; runNow.textContent = '立即备份';
+    runNow.disabled = Boolean(config.error);
+    runNow.addEventListener('click', () => triggerBackup(config.fileName, runNow));
+    const logBtn = document.createElement('button');
+    logBtn.className = 'ghost'; logBtn.textContent = '日志';
+    logBtn.disabled = Boolean(config.error);
+    logBtn.addEventListener('click', () => toggleLog(config.fileName, logBtn));
     const remove = document.createElement('button');
     remove.className = 'ghost danger'; remove.textContent = '删除';
     remove.addEventListener('click', () => deleteConfig(config.fileName));
-    actions.append(edit, remove);
+    actions.append(edit, runNow, logBtn, remove);
     card.append(actions);
+
+    // 运行状态徽标 + 可折叠日志面板
+    const run = state.runs[config.fileName];
+    if (run) {
+      const badge = document.createElement('span');
+      badge.className = `run-badge ${run.status}`;
+      badge.textContent = runStatusLabel(run);
+      card.querySelector('.card-head')?.append(badge);
+
+      const logPanel = document.createElement('pre');
+      logPanel.className = 'run-log';
+      logPanel.dataset.fileName = config.fileName;
+      logPanel.hidden = !state.expandedLogs.has(config.fileName);
+      const headLine = runSummary(run);
+      const body = (run.log || []).join('\n');
+      logPanel.textContent = headLine + (body ? '\n' + body : '');
+      card.append(logPanel);
+    }
     list.append(card);
   });
+}
+
+function runStatusLabel(run) {
+  switch (run.status) {
+    case 'running': return '运行中';
+    case 'success': return '成功';
+    case 'failed': return '失败';
+    default: return '空闲';
+  }
+}
+
+function runSummary(run) {
+  const label = runStatusLabel(run);
+  const started = run.startedAtUtc ? new Date(run.startedAtUtc).toLocaleString('zh-CN', { hour12: false }) + ' UTC' : '—';
+  const finished = run.finishedAtUtc ? new Date(run.finishedAtUtc).toLocaleString('zh-CN', { hour12: false }) + ' UTC' : '—';
+  let line = `[${label}] 触发:${run.trigger || '—'} 开始:${started} 结束:${finished}`;
+  if (run.error) line += `\n错误: ${run.error}`;
+  return line;
+}
+
+function toggleLog(fileName, btn) {
+  if (state.expandedLogs.has(fileName)) {
+    state.expandedLogs.delete(fileName);
+    btn.classList.remove('active');
+  } else {
+    state.expandedLogs.add(fileName);
+    btn.classList.add('active');
+  }
+  const panel = document.querySelector(`.run-log[data-file-name="${CSS.escape(fileName)}"]`);
+  if (panel) panel.hidden = !state.expandedLogs.has(fileName);
+}
+
+async function triggerBackup(fileName, btn) {
+  btn.disabled = true;
+  try {
+    await api(`/api/configs/${encodeURIComponent(fileName)}/backup`, { method: 'POST' });
+    toast('已开始备份');
+    state.expandedLogs.add(fileName);
+    await loadRuns();
+    // 备份是后台异步执行的，POST 返回时可能尚未进入 running；
+    // 这里强制持续轮询一段时间，直到看到本次运行的结束状态。
+    ensureRunsPolling();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+let runsPollTimer = null;
+async function loadRuns() {
+  try {
+    const runs = await api('/api/runs');
+    state.runs = Object.fromEntries(runs.map(r => [r.fileName, r]));
+    renderConfigs();
+    const anyRunning = runs.some(r => r.status === 'running');
+    if (anyRunning && !runsPollTimer) {
+      runsPollTimer = setInterval(loadRuns, 2000);
+    } else if (!anyRunning && runsPollTimer && !keepPolling) {
+      clearInterval(runsPollTimer);
+      runsPollTimer = null;
+    }
+  } catch (e) { /* 静默，不打断主流程 */ }
+}
+
+// 立即备份触发后，强制持续轮询一段时间，确保能看到本次运行的结束状态。
+// 解决「POST 返回时任务尚未进入 running，loadRuns 取消了轮询」导致看不到成功/失败的问题。
+let keepPolling = false;
+let keepPollingTimer = null;
+function ensureRunsPolling() {
+  keepPolling = true;
+  if (!runsPollTimer) {
+    runsPollTimer = setInterval(loadRuns, 2000);
+  }
+  clearTimeout(keepPollingTimer);
+  // 持续轮询最多 60 秒；之后若已无 running 任务，则允许停掉轮询。
+  keepPollingTimer = setTimeout(() => {
+    keepPolling = false;
+    loadRuns();
+  }, 60000);
 }
 
 async function loadConfigs() {
   try {
     state.configs = await api('/api/configs');
     renderConfigs();
+    await loadRuns();
   } catch (error) { toast(error.message, true); }
 }
 

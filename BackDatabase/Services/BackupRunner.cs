@@ -23,29 +23,104 @@ public sealed class BackupRunner
     /// <summary>备份失败时可选推送（env.conf 未配置则为空操作）</summary>
     private readonly PushNotifier? _pushNotifier;
 
+    /// <summary>备份运行注册表，记录每次运行的状态与日志；为 null 时不记录。</summary>
+    private readonly BackupRunRegistry? _registry;
+
     public BackupRunner(
         string baseDir,
         DatabaseBackupStrategyFactory? strategyFactory = null,
-        PushNotifier? pushNotifier = null)
+        PushNotifier? pushNotifier = null,
+        BackupRunRegistry? registry = null)
     {
         _baseDir = baseDir;
         // 未注入时使用内置 MySQL / PostgreSQL 策略
         _strategyFactory = strategyFactory ?? DatabaseBackupStrategyFactory.CreateDefault();
         _pushNotifier = pushNotifier;
+        _registry = registry;
     }
 
     /// <summary>
-    /// 按配置执行备份。
+    /// 同步执行一次备份（仅写日志到控制台，不进入运行注册表）。
+    /// 保留以兼容旧调用方；新调用方应使用 <see cref="RunAsync"/>。
+    /// </summary>
+    public void Run(
+        BackupConfig config,
+        IReadOnlyList<string>? onlyDatabases = null,
+        CancellationToken cancellationToken = default)
+        => RunCore(config, onlyDatabases, null, cancellationToken);
+
+    /// <summary>
+    /// 异步执行一次备份，并把过程记录到 <see cref="BackupRunRegistry"/>。
+    /// 返回 false 表示该配置已有备份在运行（取锁失败）。
+    /// 单次异常按现有约定不抛出（吞掉并记为 failed），返回 true 表示已执行。
+    /// </summary>
+    public async Task<bool> RunAsync(
+        BackupConfig config,
+        string trigger,
+        CancellationToken cancellationToken = default)
+    {
+        if (_registry is null)
+        {
+            // 未注入注册表时退化为同步执行
+            try
+            {
+                RunCore(config, null, null, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[{Path.GetFileName(config.SourceFile)}] 备份异常: {ex.Message}");
+            }
+            return true;
+        }
+
+        var handle = _registry.BeginRun(config, trigger);
+        if (handle is null)
+            return false;
+
+        bool success = false;
+        string? error = null;
+        try
+        {
+            RunCore(config, null, handle, cancellationToken);
+            success = true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // 取消：记为失败但不发推送（与现有取消语义一致）
+            error = "备份已取消";
+            throw;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            // 单次异常不向上抛，与调度循环既有约定一致
+        }
+        finally
+        {
+            _registry.FinishRun(handle, success, error);
+        }
+        // 走到这里说明已成功取锁并执行（无论成功或吞掉的异常），返回 true。
+        return true;
+    }
+
+    /// <summary>
+    /// 备份核心流程。
     /// </summary>
     /// <param name="config">任务配置</param>
     /// <param name="onlyDatabases">
     /// 可选：只备份指定库（重试单个库时使用）；
     /// 为 null 时备份 conf 中配置的全部 dbs。
     /// </param>
-    public void Run(
+    /// <param name="handle">运行记录句柄，用于同步日志到 Web；为 null 时只写控制台。</param>
+    private void RunCore(
         BackupConfig config,
-        IReadOnlyList<string>? onlyDatabases = null,
-        CancellationToken cancellationToken = default)
+        IReadOnlyList<string>? onlyDatabases,
+        BackupRunHandle? handle,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -53,12 +128,12 @@ public sealed class BackupRunner
         Directory.CreateDirectory(saveDir);
 
         // 先删空文件、再按数量裁剪旧备份，再写新文件，避免磁盘被脏/旧文件占满
-        TrimOldFiles(saveDir, config.MaxFiles);
+        TrimOldFiles(saveDir, config.MaxFiles, handle);
 
         var dbs = onlyDatabases ?? config.Databases;
         if (dbs.Count == 0)
         {
-            Console.WriteLine($"[{Path.GetFileName(config.SourceFile)}] 未配置 dbs，跳过");
+            Log(handle, $"[{Path.GetFileName(config.SourceFile)}] 未配置 dbs，跳过");
             return;
         }
 
@@ -66,7 +141,7 @@ public sealed class BackupRunner
         foreach (var db in dbs)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            BackupOneDatabase(config, saveDir, db, cancellationToken);
+            BackupOneDatabase(config, saveDir, db, handle, cancellationToken);
         }
     }
 
@@ -78,6 +153,7 @@ public sealed class BackupRunner
         BackupConfig config,
         string saveDir,
         string db,
+        BackupRunHandle? handle,
         CancellationToken cancellationToken,
         bool isRetry = false)
     {
@@ -93,7 +169,7 @@ public sealed class BackupRunner
         {
             var reason =
                 $"不支持的数据库类型: {config.DbType}。已注册: {string.Join(", ", _strategyFactory.RegisteredDbTypes)}";
-            Console.WriteLine(reason);
+            Log(handle, reason);
             // 配置错误无法靠重试解决，直接推送
             NotifyFailure(config, db, reason, cancellationToken);
             return;
@@ -107,12 +183,12 @@ public sealed class BackupRunner
         catch (Exception ex)
         {
             var reason = $"构建备份命令失败 ({config.DbType}/{db}): {ex.Message}";
-            Console.WriteLine(reason);
+            Log(handle, reason);
             NotifyFailure(config, db, reason, cancellationToken);
             return;
         }
 
-        Console.WriteLine($"备份命令 {command.DisplayCommand}");
+        Log(handle, $"备份命令 {command.DisplayCommand}");
 
         try
         {
@@ -122,6 +198,7 @@ public sealed class BackupRunner
                 command.Arguments,
                 command.ExtraEnvironment,
                 redirectPath,
+                handle,
                 cancellationToken);
 
             if (exitCode != 0)
@@ -129,15 +206,15 @@ public sealed class BackupRunner
                 var combined = string.Join(Environment.NewLine,
                     new[] { stdout, stderr }.Where(s => !string.IsNullOrWhiteSpace(s)));
                 var chinese = TryDecodeGbk(combined);
-                Console.WriteLine($"错误信息: {combined} | 中文解码: {chinese} | exit={exitCode}");
+                Log(handle, $"错误信息: {combined} | 中文解码: {chinese} | exit={exitCode}");
 
                 // 失败时删掉可能不完整的 sql，避免脏文件占用 maxfiles 名额
-                TryDelete(sqlPath);
+                TryDelete(sqlPath, handle);
 
                 if (!isRetry)
                 {
-                    Console.WriteLine("重新执行一次备份");
-                    BackupOneDatabase(config, saveDir, db, cancellationToken, isRetry: true);
+                    Log(handle, "重新执行一次备份");
+                    BackupOneDatabase(config, saveDir, db, handle, cancellationToken, isRetry: true);
                 }
                 else
                 {
@@ -150,14 +227,14 @@ public sealed class BackupRunner
             }
             else
             {
-                Console.WriteLine($"数据库 {db} 备份完毕 -> {sqlPath}");
+                Log(handle, $"数据库 {db} 备份完毕 -> {sqlPath}");
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // 中断时不重试、不推送；子进程释放文件句柄后删除当前残缺备份。
-            var deleted = TryDelete(sqlPath);
-            Console.WriteLine(deleted
+            var deleted = TryDelete(sqlPath, handle);
+            Log(handle, deleted
                 ? $"数据库 {db} 备份已中断，已删除残缺文件: {sqlPath}"
                 : $"数据库 {db} 备份已中断，但残缺文件删除失败: {sqlPath}");
             throw;
@@ -165,12 +242,12 @@ public sealed class BackupRunner
         catch (Exception ex)
         {
             // 例如 dump 工具不在 PATH、无法启动进程等
-            Console.WriteLine($"执行备份失败 ({db}): {ex.Message}");
-            TryDelete(sqlPath);
+            Log(handle, $"执行备份失败 ({db}): {ex.Message}");
+            TryDelete(sqlPath, handle);
             if (!isRetry)
             {
-                Console.WriteLine("重新执行一次备份");
-                BackupOneDatabase(config, saveDir, db, cancellationToken, isRetry: true);
+                Log(handle, "重新执行一次备份");
+                BackupOneDatabase(config, saveDir, db, handle, cancellationToken, isRetry: true);
             }
             else
             {
@@ -186,15 +263,22 @@ public sealed class BackupRunner
         string reason,
         CancellationToken cancellationToken)
     {
-        Console.WriteLine(
+        Log(null,
             $"[备份失败待推送] conf={Path.GetFileName(config.SourceFile)} db={database} reason={reason}");
         if (_pushNotifier is null)
         {
-            Console.WriteLine("[推送跳过] BackupRunner 未注入 PushNotifier");
+            Log(null, "[推送跳过] BackupRunner 未注入 PushNotifier");
             return;
         }
 
         _pushNotifier.NotifyBackupFailure(config, database, reason, cancellationToken);
+    }
+
+    /// <summary>同时写控制台与运行记录日志（handle 为 null 时只写控制台）。</summary>
+    private static void Log(BackupRunHandle? handle, string message)
+    {
+        Console.WriteLine(message);
+        handle?.Append(message);
     }
 
     /// <summary>
@@ -207,11 +291,13 @@ public sealed class BackupRunner
     /// 若不为 null，将标准输出原样写入该文件（用于 mysqldump）；
     /// 若为 null，则把标准输出收集到字符串返回（pg_dump 一般无大量 stdout）。
     /// </param>
+    /// <param name="handle">运行记录句柄，用于把 stderr/stdout 错误同步到 Web 日志。</param>
     private static (int ExitCode, string Stdout, string Stderr) RunProcess(
         string fileName,
         IReadOnlyList<string> args,
         IReadOnlyDictionary<string, string>? extraEnv,
         string? redirectStdoutTo,
+        BackupRunHandle? handle,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -241,11 +327,14 @@ public sealed class BackupRunner
         var stderr = new StringBuilder();
         var stdout = new StringBuilder();
 
-        // 异步读 stderr，避免缓冲区塞满导致子进程死锁
+        // 异步读 stderr，避免缓冲区塞满导致子进程死锁；同时同步到运行日志
         process.ErrorDataReceived += (_, e) =>
         {
             if (e.Data != null)
+            {
                 stderr.AppendLine(e.Data);
+                handle?.Append($"[stderr] {e.Data}");
+            }
         };
 
         // 不需要重定向到文件时，异步读 stdout
@@ -254,7 +343,10 @@ public sealed class BackupRunner
             process.OutputDataReceived += (_, e) =>
             {
                 if (e.Data != null)
+                {
                     stdout.AppendLine(e.Data);
+                    handle?.Append($"[stdout] {e.Data}");
+                }
             };
         }
 
@@ -326,10 +418,10 @@ public sealed class BackupRunner
     /// 2. 再当文件数 &gt; maxFiles 时，按 LastWriteTimeUtc 从旧到新删除，直到不超过上限。
     /// 对应 Go 的 getMinModifyTimeFile + 循环 Remove，并额外处理空文件。
     /// </summary>
-    private static void TrimOldFiles(string saveDir, int maxFiles)
+    private static void TrimOldFiles(string saveDir, int maxFiles, BackupRunHandle? handle)
     {
         // 先清 0KB 空文件，再按数量裁剪，避免空文件占 maxfiles 名额
-        DeleteEmptyFiles(saveDir);
+        DeleteEmptyFiles(saveDir, handle);
 
         if (maxFiles <= 0)
             return;
@@ -348,12 +440,12 @@ public sealed class BackupRunner
             try
             {
                 oldest.Delete();
-                Console.WriteLine($"已删除过期备份: {oldest.FullName}");
+                Log(handle, $"已删除过期备份: {oldest.FullName}");
             }
             catch (Exception ex)
             {
                 // 删不掉就停止循环，避免死循环打日志
-                Console.WriteLine($"删除文件失败 {oldest.FullName}: {ex.Message}");
+                Log(handle, $"删除文件失败 {oldest.FullName}: {ex.Message}");
                 break;
             }
         }
@@ -363,7 +455,7 @@ public sealed class BackupRunner
     /// 删除目录内所有 0 字节文件（备份失败、中断或 dump 空输出时常见）。
     /// 单个文件删失败只打日志并继续，不中断整体清理。
     /// </summary>
-    private static void DeleteEmptyFiles(string saveDir)
+    private static void DeleteEmptyFiles(string saveDir, BackupRunHandle? handle)
     {
         IEnumerable<FileInfo> emptyFiles;
         try
@@ -375,7 +467,7 @@ public sealed class BackupRunner
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"扫描空文件失败 {saveDir}: {ex.Message}");
+            Log(handle, $"扫描空文件失败 {saveDir}: {ex.Message}");
             return;
         }
 
@@ -384,17 +476,17 @@ public sealed class BackupRunner
             try
             {
                 file.Delete();
-                Console.WriteLine($"已删除空备份文件: {file.FullName}");
+                Log(handle, $"已删除空备份文件: {file.FullName}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"删除空文件失败 {file.FullName}: {ex.Message}");
+                Log(handle, $"删除空文件失败 {file.FullName}: {ex.Message}");
             }
         }
     }
 
     /// <summary>尽力删除文件，忽略任何异常（用于清理失败产生的残缺 sql）</summary>
-    private static bool TryDelete(string path)
+    private static bool TryDelete(string path, BackupRunHandle? handle)
     {
         try
         {
@@ -405,7 +497,7 @@ public sealed class BackupRunner
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"删除残缺备份失败 {path}: {ex.Message}");
+            Log(handle, $"删除残缺备份失败 {path}: {ex.Message}");
             return false;
         }
     }
