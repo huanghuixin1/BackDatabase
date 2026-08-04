@@ -144,6 +144,13 @@ public static partial class ConfigWebService
         app.MapDelete("/api/configs/{fileName}", (string fileName) =>
             ApiCall(() => store.Delete(fileName)));
 
+        // 回收站：列出 / 恢复 / 彻底删除
+        app.MapGet("/api/trash", () => ApiCall(store.ListTrashed));
+        app.MapPost("/api/trash/{fileName}/restore", (string fileName) =>
+            ApiCall(() => store.Restore(fileName)));
+        app.MapDelete("/api/trash/{fileName}", (string fileName) =>
+            ApiCall(() => store.Purge(fileName)));
+
         // 立即备份：从磁盘读取最新 .conf 后执行一次，不影响调度器。
         // 已有备份在跑时回 409，避免同配置并发。
         app.MapPost("/api/configs/{fileName}/backup", (string fileName) =>
@@ -400,6 +407,7 @@ public static partial class ConfigWebService
     {
         private readonly string _baseDir;
         private readonly string _configDir;
+        private readonly string _trashDir;
         private readonly object _writeLock = new();
 
         public ConfigFileStore(string baseDir, string configDir)
@@ -407,6 +415,10 @@ public static partial class ConfigWebService
             _baseDir = Path.GetFullPath(baseDir);
             _configDir = Path.GetFullPath(configDir);
             Directory.CreateDirectory(_configDir);
+            // 回收站目录：config/.trash。ConfigLoader.LoadAll 只枚举 *.conf（不含子目录），
+            // 回收站里的文件不会被当作活动任务加载，天然隔离。
+            _trashDir = Path.Combine(_configDir, ".trash");
+            Directory.CreateDirectory(_trashDir);
         }
 
         public IReadOnlyList<BackupConfigView> List()
@@ -473,10 +485,87 @@ public static partial class ConfigWebService
             {
                 if (!File.Exists(path))
                     throw new FileNotFoundException($"配置 {fileName} 不存在。");
-                File.Delete(path);
+
+                // 移入回收站而非物理删除：同名任务删过两次时追加时间戳后缀避免覆盖
+                var trashName = fileName;
+                var trashPath = Path.Combine(_trashDir, fileName);
+                if (File.Exists(trashPath))
+                {
+                    var stamp = DateTime.UtcNow.ToString("yyyy-MM-dd__HH.mm.ss");
+                    trashName = $"{Path.GetFileNameWithoutExtension(fileName)}__{stamp}.conf";
+                    trashPath = Path.Combine(_trashDir, trashName);
+                }
+                File.Move(path, trashPath, overwrite: false);
+                // 记录删除时间（移动会保留原 LastWriteTime，故单独写一次）
+                File.SetLastWriteTimeUtc(trashPath, DateTime.UtcNow);
             }
 
-            return new { message = "配置已删除，重启 BackDatabase 后生效。" };
+            return new { message = "配置已移入回收站，重启 BackDatabase 后生效。" };
+        }
+
+        /// <summary>列出回收站中所有被删除的配置（按删除时间倒序）。</summary>
+        public IReadOnlyList<TrashedConfigView> ListTrashed()
+        {
+            var result = new List<TrashedConfigView>();
+            foreach (var path in Directory.EnumerateFiles(_trashDir, "*.conf")
+                         .OrderByDescending(p => new FileInfo(p).LastWriteTimeUtc))
+            {
+                try
+                {
+                    var cfg = ConfigLoader.ParseFile(path);
+                    result.Add(new TrashedConfigView
+                    {
+                        FileName = Path.GetFileName(path),
+                        DbType = cfg.DbType,
+                        Host = cfg.Host,
+                        Port = cfg.Port,
+                        User = cfg.User,
+                        Databases = string.Join(',', cfg.Databases),
+                        DeletedAtUtc = new FileInfo(path).LastWriteTimeUtc,
+                    });
+                }
+                catch (Exception ex)
+                {
+                    result.Add(new TrashedConfigView
+                    {
+                        FileName = Path.GetFileName(path),
+                        Error = ex.Message,
+                        DeletedAtUtc = new FileInfo(path).LastWriteTimeUtc,
+                    });
+                }
+            }
+            return result;
+        }
+
+        /// <summary>从回收站恢复一个配置到 config 目录；同名活动配置已存在时报错。</summary>
+        public object Restore(string routeFileName)
+        {
+            var fileName = NormalizeFileName(routeFileName);
+            var trashPath = Path.Combine(_trashDir, fileName);
+            var activePath = ResolveConfigPath(fileName);
+            lock (_writeLock)
+            {
+                if (!File.Exists(trashPath))
+                    throw new FileNotFoundException($"回收站中没有配置 {fileName}。");
+                if (File.Exists(activePath))
+                    throw new ConfigValidationException($"已存在同名活动配置 {fileName}，请先重命名或删除现有配置。");
+                File.Move(trashPath, activePath, overwrite: false);
+            }
+            return new { message = "配置已从回收站恢复，重启 BackDatabase 后生效。" };
+        }
+
+        /// <summary>从回收站彻底删除一个配置（不可恢复）。</summary>
+        public object Purge(string routeFileName)
+        {
+            var fileName = NormalizeFileName(routeFileName);
+            var trashPath = Path.Combine(_trashDir, fileName);
+            lock (_writeLock)
+            {
+                if (!File.Exists(trashPath))
+                    throw new FileNotFoundException($"回收站中没有配置 {fileName}。");
+                File.Delete(trashPath);
+            }
+            return new { message = "配置已彻底删除。" };
         }
 
         /// <summary>
@@ -513,7 +602,7 @@ public static partial class ConfigWebService
                 {
                     Name = file.Name,
                     SizeBytes = file.Length,
-                    CreatedAtUtc = file.CreationTimeUtc,
+                    CreatedAtUtc = file.LastWriteTimeUtc,
                 });
             }
 
@@ -879,6 +968,21 @@ public sealed class BackupFileView
     public long SizeBytes { get; init; }
     /// <summary>文件创建时间（UTC）。</summary>
     public DateTime CreatedAtUtc { get; init; }
+}
+
+/// <summary>回收站中被删除的配置视图。</summary>
+public sealed class TrashedConfigView
+{
+    public string FileName { get; init; } = "";
+    public string DbType { get; init; } = "mysql";
+    public string Host { get; init; } = "";
+    public string Port { get; init; } = "";
+    public string User { get; init; } = "";
+    public string Databases { get; init; } = "";
+    /// <summary>移入回收站的时间（UTC）。</summary>
+    public DateTime DeletedAtUtc { get; init; }
+    /// <summary>解析失败时的错误信息；成功时为 null。</summary>
+    public string? Error { get; init; }
 }
 
 public sealed class EnvironmentWriteRequest

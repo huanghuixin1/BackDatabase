@@ -16,6 +16,7 @@
       </a>
       <nav aria-label="主导航">
         <button class="nav-item active" data-view="tasks"><span>▦</span>备份任务</button>
+        <button class="nav-item" data-view="trash"><span>⏚</span>回收站</button>
         <button class="nav-item" data-view="environment"><span>⌁</span>消息推送</button>
       </nav>
       <div class="side-note">
@@ -60,6 +61,19 @@
           <h2>还没有备份配置</h2>
           <p>创建第一项数据库备份任务，然后重启 BackDatabase。</p>
           <button class="primary" id="empty-add">新建配置</button>
+        </div>
+      </section>
+
+      <section id="trash-view" class="view">
+        <div class="section-heading">
+          <div><h2>回收站</h2><p>已删除的任务在此暂存，可恢复或彻底删除。</p></div>
+          <button class="ghost" id="refresh-trash-button">↻ 刷新</button>
+        </div>
+        <div id="trash-list" class="config-grid" aria-live="polite"></div>
+        <div id="trash-empty" class="empty" hidden>
+          <div class="empty-icon">⏚</div>
+          <h2>回收站为空</h2>
+          <p>删除的任务会暂存在这里，可随时恢复。</p>
         </div>
       </section>
 
@@ -130,6 +144,13 @@
       <button class="icon-button" type="button" id="close-files-dialog" aria-label="关闭">×</button>
     </div>
     <div class="dialog-body">
+      <div class="files-toolbar">
+        <label for="files-filter">筛选文件</label>
+        <select id="files-filter"><option value="all">全部文件</option><option value="today">今天</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option></select>
+        <label for="files-database-filter">数据库</label>
+        <select id="files-database-filter"><option value="all">全部数据库</option></select>
+        <span id="files-summary" class="files-summary"></span>
+      </div>
       <p id="files-empty-msg" class="files-empty-msg" hidden>暂无备份文件</p>
       <div id="files-table-wrapper" class="files-table-wrapper">
         <table class="files-table">

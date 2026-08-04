@@ -2,6 +2,7 @@ const state = {
   configs: [],
   runs: {},
   expandedLogs: new Set(),
+  trash: [],
   editing: null,
   authenticated: false,
   required: false,
@@ -204,11 +205,16 @@ async function openFilesDialog(fileName) {
   $('#files-tbody').innerHTML = '';
   $('#files-empty-msg').hidden = true;
   $('#files-table-wrapper').hidden = true;
+  $('#files-filter').value = 'all';
+  $('#files-database-filter').innerHTML = '<option value="all">全部数据库</option>';
+  $('#files-summary').textContent = '';
   const dialog = $('#files-dialog');
   dialog.showModal();
   try {
     const files = await api(`/api/configs/${encodeURIComponent(fileName)}/files`);
-    const list = Array.isArray(files) ? files : [];
+    state.fileList = Array.isArray(files) ? files : [];
+    populateDatabaseFilter();
+    const list = state.fileList;
     if (!list.length) {
       $('#files-empty-msg').hidden = false;
       return;
@@ -223,6 +229,7 @@ async function openFilesDialog(fileName) {
         <td>${f.createdAtUtc ? new Date(f.createdAtUtc).toLocaleString('zh-CN', { hour12: false }) + ' UTC' : '—'}</td>`;
       $('#files-tbody').appendChild(tr);
     });
+    renderFileGroups();
   } catch (error) {
     toast(error.message, true);
   }
@@ -233,6 +240,72 @@ function formatFileSize(bytes) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   return (bytes / Math.pow(1024, i)).toFixed(i > 1 ? 2 : 0) + ' ' + units[i];
+}
+
+function renderFileGroups() {
+  const filter = $('#files-filter').value;
+  const databaseFilter = $('#files-database-filter').value;
+  const now = Date.now();
+  const cutoff = filter === 'today'
+    ? new Date().setHours(0, 0, 0, 0)
+    : filter === '7d' ? now - 7 * 86400000
+    : filter === '30d' ? now - 30 * 86400000
+    : 0;
+  const filtered = (state.fileList || []).filter(file => {
+    const matchesDate = !cutoff || (file.createdAtUtc && new Date(file.createdAtUtc).getTime() >= cutoff);
+    const matchesDatabase = databaseFilter === 'all' || extractDatabaseName(file.name) === databaseFilter;
+    return matchesDate && matchesDatabase;
+  });
+  $('#files-tbody').innerHTML = '';
+  $('#files-empty-msg').hidden = filtered.length > 0;
+  $('#files-table-wrapper').hidden = filtered.length === 0;
+  $('#files-summary').textContent = `显示 ${filtered.length} / ${(state.fileList || []).length} 个文件`;
+  if (!filtered.length) return;
+
+  const groups = new Map();
+  filtered.forEach(file => {
+    const date = file.createdAtUtc ? new Date(file.createdAtUtc) : null;
+    const key = date ? `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}` : '未知日期';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(file);
+  });
+
+  let rowIndex = 1;
+  for (const [groupName, files] of groups) {
+    const groupRow = document.createElement('tr');
+    groupRow.className = 'files-group-row';
+    groupRow.innerHTML = `<td colspan="4">${escapeHtml(groupName)} · ${files.length} 个文件</td>`;
+    $('#files-tbody').appendChild(groupRow);
+    files.forEach(file => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${rowIndex++}</td>
+        <td title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</td>
+        <td>${formatFileSize(file.sizeBytes)}</td>
+        <td>${file.createdAtUtc ? new Date(file.createdAtUtc).toLocaleString('zh-CN', { hour12: false }) + ' UTC' : '—'}</td>`;
+      $('#files-tbody').appendChild(tr);
+    });
+  }
+}
+
+function populateDatabaseFilter() {
+  const select = $('#files-database-filter');
+  const databases = [...new Set((state.fileList || []).map(file => extractDatabaseName(file.name)))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  databases.forEach(database => {
+    const option = document.createElement('option');
+    option.value = database;
+    option.textContent = database;
+    select.appendChild(option);
+  });
+}
+
+function extractDatabaseName(fileName) {
+  const match = String(fileName).match(/^(.*)_\d{4}-\d{2}-\d{2}__\d{2}\.\d{2}\.\d{2}\.sql$/i);
+  return match?.[1] || '其他';
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
 }
 
 async function triggerBackup(fileName, btn) {
@@ -360,6 +433,10 @@ function showView(viewName) {
     $('#page-title').textContent = '备份任务';
     $('#add-button').style.display = '';
     $('#restart-button').style.display = '';
+  } else if (viewName === 'trash') {
+    $('#page-title').textContent = '回收站';
+    $('#add-button').style.display = 'none';
+    $('#restart-button').style.display = '';
   } else if (viewName === 'environment') {
     $('#page-title').textContent = '消息推送';
     $('#add-button').style.display = 'none';
@@ -403,6 +480,7 @@ async function loadSession() {
     node.classList.toggle('active', node.dataset.view === 'tasks'));
   await loadConfigs();
   await loadEnvironment();
+  loadTrash();
 }
 
 async function login(e) {
@@ -504,11 +582,93 @@ async function saveConfig(event) {
 }
 
 async function deleteConfig(fileName) {
-  if (!confirm(`确定删除 ${fileName}？当前运行中的任务会持续到服务重启。`)) return;
+  if (!confirm(`确定删除 ${fileName}？任务会移入回收站，可从回收站恢复。`)) return;
   try {
     const result = await api(`/api/configs/${encodeURIComponent(fileName)}`, { method: 'DELETE' });
     toast(result.message);
     await loadConfigs();
+    await loadTrash();
+  } catch (error) { toast(error.message, true); }
+}
+
+async function loadTrash() {
+  try {
+    const items = await api('/api/trash');
+    state.trash = Array.isArray(items) ? items : [];
+    renderTrash();
+  } catch (e) { /* 静默 */ }
+}
+
+function renderTrash() {
+  const list = $('#trash-list');
+  if (!list) return;
+  list.replaceChildren();
+  $('#trash-empty').hidden = state.trash.length !== 0;
+  state.trash.forEach(item => {
+    const card = document.createElement('article');
+    card.className = `config-card${item.error ? ' error' : ''}`;
+    const head = document.createElement('div');
+    head.className = 'card-head';
+    const titleWrap = document.createElement('div');
+    const title = document.createElement('h3');
+    const file = document.createElement('small');
+    title.textContent = item.fileName.replace(/\.conf$/i, '').replace(/__\d{4}-\d{2}-\d{2}__\d{2}\.\d{2}\.\d{2}$/, '');
+    file.textContent = item.fileName;
+    titleWrap.append(title, file);
+    const badge = document.createElement('span');
+    badge.className = 'type-badge';
+    badge.textContent = item.error ? '配置错误' : item.dbType;
+    head.append(titleWrap, badge);
+    card.append(head);
+
+    if (item.error) {
+      const error = document.createElement('p');
+      error.style.cssText = 'color:#a43d3d;margin:20px 0;font-size:13px';
+      error.textContent = item.error;
+      card.append(error);
+    } else {
+      const details = document.createElement('div');
+      details.className = 'details';
+      const deleted = item.deletedAtUtc
+        ? new Date(item.deletedAtUtc).toLocaleString('zh-CN', { hour12: false }) + ' UTC'
+        : '—';
+      details.append(
+        detail('连接地址', `${item.host}:${item.port}`),
+        detail('数据库', item.databases),
+        detail('删除时间', deleted),
+      );
+      card.append(details);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'card-actions';
+    const restore = document.createElement('button');
+    restore.className = 'ghost primary-ghost'; restore.textContent = '恢复';
+    restore.addEventListener('click', () => restoreConfig(item.fileName));
+    const purge = document.createElement('button');
+    purge.className = 'ghost danger'; purge.textContent = '彻底删除';
+    purge.addEventListener('click', () => purgeConfig(item.fileName));
+    actions.append(restore, purge);
+    card.append(actions);
+    list.append(card);
+  });
+}
+
+async function restoreConfig(fileName) {
+  try {
+    const result = await api(`/api/trash/${encodeURIComponent(fileName)}/restore`, { method: 'POST' });
+    toast(result.message);
+    await loadConfigs();
+    await loadTrash();
+  } catch (error) { toast(error.message, true); }
+}
+
+async function purgeConfig(fileName) {
+  if (!confirm(`彻底删除 ${fileName}？此操作不可恢复。`)) return;
+  try {
+    const result = await api(`/api/trash/${encodeURIComponent(fileName)}`, { method: 'DELETE' });
+    toast(result.message);
+    await loadTrash();
   } catch (error) { toast(error.message, true); }
 }
 
@@ -546,17 +706,22 @@ document.querySelectorAll('.nav-item').forEach(button => button.addEventListener
   document.querySelectorAll('.nav-item, .view').forEach(node => node.classList.remove('active'));
   button.classList.add('active');
   $(`#${button.dataset.view}-view`).classList.add('active');
-  $('#page-title').textContent = button.dataset.view === 'tasks' ? '备份任务' : '消息推送';
+  const titles = { tasks: '备份任务', trash: '回收站', environment: '消息推送' };
+  $('#page-title').textContent = titles[button.dataset.view] || '备份任务';
   $('#add-button').style.display = button.dataset.view === 'tasks' ? '' : 'none';
+  if (button.dataset.view === 'trash') loadTrash();
 }));
 
 $('#add-button').addEventListener('click', () => openDialog());
 $('#empty-add').addEventListener('click', () => openDialog());
 $('#refresh-button').addEventListener('click', loadConfigs);
+$('#refresh-trash-button').addEventListener('click', loadTrash);
 $('#backup-all-button').addEventListener('click', backupAll);
 $('#close-dialog').addEventListener('click', () => dialog.close());
 $('#cancel-dialog').addEventListener('click', () => dialog.close());
 $('#close-files-dialog').addEventListener('click', () => $('#files-dialog').close());
+$('#files-filter').addEventListener('change', renderFileGroups);
+$('#files-database-filter').addEventListener('change', renderFileGroups);
 $('#password-toggle').addEventListener('click', () => {
   const input = form.elements.password;
   input.type = input.type === 'password' ? 'text' : 'password';
