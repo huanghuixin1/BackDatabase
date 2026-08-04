@@ -51,6 +51,10 @@
   <ItemGroup>
     <TrimmerRootAssembly Include="HxPushSdk" />
     <TrimmerRootAssembly Include="HxPushModel" />
+    <!-- DriveInfo（GetDiskInfo 查硬盘空间用）位于此程序集；
+         PublishTrimmed=true 时会被裁剪器剔掉，Linux 运行时报
+         "Could not load System.IO.FileSystem.DriveInfo"，故显式保留 -->
+    <TrimmerRootAssembly Include="System.IO.FileSystem.DriveInfo" />
   </ItemGroup>
 
   <ItemGroup>
