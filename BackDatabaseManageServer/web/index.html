@@ -77,6 +77,7 @@
         <label>端口<input id="task-port" required value="3306" inputmode="numeric"></label>
         <label>用户名<input id="task-user" required value="root"></label>
         <label>数据库密码<input id="task-password" type="password" autocomplete="new-password" placeholder="编辑时留空表示保留"></label>
+        <button type="button" id="task-password-toggle" class="toggle-eye" aria-label="显示/隐藏密码">👁</button>
         <label class="check wide"><input id="task-clear-password" type="checkbox"> 清除现有数据库密码</label>
         <label class="wide">数据库列表<input id="task-databases" required placeholder="多个数据库用英文逗号分隔"></label>
         <label>备份计划<input id="task-backtime" required value="60" placeholder="分钟数或 UTC HH:mm"></label>

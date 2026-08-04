@@ -386,15 +386,19 @@ function openDialog(config = null) {
   form.elements.host.value = config?.host || '127.0.0.1';
   form.elements.port.value = config?.port || '3306';
   form.elements.user.value = config?.user || 'root';
-  form.elements.password.value = '';
+  // 编辑时回显已保存的密码明文，方便核对；新建时留空
+  form.elements.password.value = config?.password || '';
+  form.elements.password.type = 'password';
   form.elements.clearPassword.checked = false;
   form.elements.databases.value = config?.databases || '';
   form.elements.backtime.value = config?.backtime || '60';
   form.elements.maxFiles.value = config?.maxFiles || 180;
   form.elements.saveDir.value = config?.saveDir || '/backup/';
-  $('#password-hint').textContent = config?.passwordConfigured
-    ? '已保存密码；留空将保留，勾选下方选项可清除。'
-    : '当前未配置密码。';
+  $('#password-hint').textContent = config
+    ? (config.passwordConfigured
+        ? '已显示当前数据库密码；可直接修改，留空则保留原值。'
+        : '当前未配置密码。')
+    : '新配置可留空，适用于无密码连接。';
   dialog.showModal();
   // 打开对话框时立即加载一次磁盘空间信息
   setTimeout(() => {
@@ -481,6 +485,10 @@ $('#empty-add').addEventListener('click', () => openDialog());
 $('#refresh-button').addEventListener('click', loadConfigs);
 $('#close-dialog').addEventListener('click', () => dialog.close());
 $('#cancel-dialog').addEventListener('click', () => dialog.close());
+$('#password-toggle').addEventListener('click', () => {
+  const input = form.elements.password;
+  input.type = input.type === 'password' ? 'text' : 'password';
+});
 $('#logout-button').addEventListener('click', logout);
 $('#restart-button').addEventListener('click', restartService);
 

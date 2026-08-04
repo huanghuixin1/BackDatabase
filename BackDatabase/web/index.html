@@ -111,7 +111,7 @@
         <label class="field"><span>主机地址</span><input name="host" required value="127.0.0.1"></label>
         <label class="field"><span>端口</span><input name="port" required inputmode="numeric" value="3306"></label>
         <label class="field"><span>用户名</span><input name="user" required value="root" autocomplete="username"></label>
-        <label class="field wide"><span>密码</span><input name="password" type="password" autocomplete="new-password" placeholder="编辑时留空可保留原密码"><small id="password-hint">新配置可留空，适用于无密码连接。</small></label>
+        <label class="field wide"><span>密码</span><div class="suffix-input"><input name="password" type="password" autocomplete="new-password" placeholder="编辑时留空可保留原密码"><button type="button" class="toggle-eye" id="password-toggle" aria-label="显示/隐藏密码">👁</button></div><small id="password-hint">新配置可留空，适用于无密码连接。</small></label>
         <label class="checkbox wide"><input name="clearPassword" type="checkbox"> 清除已保存的数据库密码</label>
         <label class="field wide"><span>数据库</span><input name="databases" required placeholder="app, analytics"><small>多个数据库使用英文逗号分隔</small></label>
         <label class="field"><span>备份计划</span><input name="backtime" required value="60"><small>分钟数，或每日 UTC 时刻 HH:mm</small></label>

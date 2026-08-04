@@ -82,7 +82,11 @@ public static partial class ConfigWebService
         {
             var provider = new PhysicalFileProvider(webDir);
             app.UseStaticFiles(new StaticFileOptions { FileProvider = provider });
-            app.MapGet("/", () => Results.File(Path.Combine(webDir, "index.html"), "text/html; charset=utf-8"));
+            // 服务 index.html 时给 app.js / styles.css 注入 ?v=<文件最后修改时间>，
+            // 文件改动后版本参数自动变化，浏览器不会再用旧缓存——避免每次都要 Ctrl+F5。
+            app.MapGet("/", () => Results.Text(
+                IndexWithVersion(Path.Combine(webDir, "index.html"), webDir),
+                "text/html; charset=utf-8"));
         }
 
         app.MapGet("/api/session", (HttpContext context) => Results.Ok(new
@@ -235,6 +239,53 @@ public static partial class ConfigWebService
         }
 
         return IPAddress.IsLoopback(address);
+    }
+
+    /// <summary>
+    /// 读取 index.html 并给 app.js / styles.css 的引用追加 <c>?v=&lt;最后修改时间戳&gt;</c>。
+    /// 文件改动后时间戳变化，浏览器视为新 URL 强制重新加载，免去客户端 Ctrl+F5。
+    /// 找不到文件时原样返回源码，不影响渲染。仅替换根路径引用（href="/..."、src="/..."），
+    /// 避免误伤其它相对引用。
+    /// </summary>
+    private static string IndexWithVersion(string indexHtmlPath, string webDir)
+    {
+        string html;
+        try
+        {
+            html = File.ReadAllText(indexHtmlPath);
+        }
+        catch
+        {
+            // 读不到就回退到原始文件输出（下方 Results.File 已被替换为本方法，
+            // 极端情况下至少要返回点东西，这里给个最小骨架避免白屏）
+            return "<!doctype html><meta charset=\"utf-8\"><title>BackDatabase</title><p>页面资源加载失败。</p>";
+        }
+
+        foreach (var asset in new[] { "app.js", "styles.css" })
+        {
+            var assetPath = Path.Combine(webDir, asset);
+            string version;
+            try
+            {
+                // 用 UTC Ticks 做版本号：单调递增、文件改了就变、无特殊字符
+                version = new FileInfo(assetPath).LastWriteTimeUtc.Ticks.ToString(CultureInfo.InvariantCulture);
+            }
+            catch
+            {
+                // 文件不存在或不访问时给固定值，省略 ?v 等价于不缓存破坏，但保持引用合法
+                version = "0";
+            }
+
+            // 匹配 href="/styles.css" / src="/app.js" 形式的根路径引用（含 defer 等属性也兼容：
+            // 我们只替换路径本身，前后属性原样保留）。同时容忍已有的旧 ?v=xxx 被覆盖。
+            html = Regex.Replace(
+                html,
+                $"((?:href|src)\\s*=\\s*[\"'])\\/{Regex.Escape(asset)}(\\?v=[^\"']*)?([\"'])",
+                $"$1/{asset}?v={version}$3",
+                RegexOptions.IgnoreCase);
+        }
+
+        return html;
     }
 
     private static HttpRequestData CreateAuthRequest(HttpContext context, string body = "", string? method = null)
@@ -645,6 +696,7 @@ public static partial class ConfigWebService
             Port = config.Port,
             User = config.User,
             PasswordConfigured = !string.IsNullOrEmpty(config.Password),
+            Password = config.Password,
             Databases = string.Join(',', config.Databases),
             SaveDir = config.SaveDirRelative,
             MaxFiles = config.MaxFiles,
@@ -680,6 +732,8 @@ public sealed class BackupConfigView
     public string Port { get; init; } = "";
     public string User { get; init; } = "";
     public bool PasswordConfigured { get; init; }
+    /// <summary>当前已保存的数据库密码明文，供编辑界面回显。</summary>
+    public string Password { get; init; } = "";
     public string Databases { get; init; } = "";
     public string SaveDir { get; init; } = "/backup/";
     public int MaxFiles { get; init; } = 180;

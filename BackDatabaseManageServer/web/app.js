@@ -202,14 +202,18 @@ function openTaskDialog(config = null) {
   $("task-host").value = config?.host || "127.0.0.1";
   $("task-port").value = config?.port || "3306";
   $("task-user").value = config?.user || "root";
-  $("task-password").value = "";
+  // 编辑时回显远端节点已保存的数据库密码明文，方便核对；新建时留空
+  $("task-password").value = config?.password || "";
+  $("task-password").type = "password";
   $("task-clear-password").checked = false;
   $("task-databases").value = config?.databases || "";
   $("task-backtime").value = config?.backtime || "60";
   $("task-max-files").value = config?.maxFiles || 180;
   $("task-save-dir").value = config?.saveDir || "/backup/";
   $("task-password-hint").textContent = config
-    ? `数据库密码：${config.passwordConfigured ? "已配置；留空表示保留" : "未配置"}`
+    ? (config.passwordConfigured
+        ? "已显示当前数据库密码；可直接修改，留空则保留原值。"
+        : "当前未配置数据库密码。")
     : "数据库密码可留空。";
   $("task-dialog").showModal();
 }
@@ -369,6 +373,10 @@ $("add-task").addEventListener("click", () => openTaskDialog());
 $("task-form").addEventListener("submit", saveTask);
 $("task-close").addEventListener("click", closeTaskDialog);
 $("task-cancel").addEventListener("click", closeTaskDialog);
+$("task-password-toggle").addEventListener("click", () => {
+  const input = $("task-password");
+  input.type = input.type === "password" ? "text" : "password";
+});
 $("configs-output").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-task-action]");
   if (!button) return;

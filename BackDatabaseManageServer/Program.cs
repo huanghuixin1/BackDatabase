@@ -62,7 +62,9 @@ app.Use(async (context, next) =>
     await WriteApiResponseAsync(context, ApiResponse.Error(401, "Unauthorized."));
 });
 
-app.MapGet("/", () => Results.File(Path.Combine(webDirectory, "index.html"), "text/html; charset=utf-8"));
+app.MapGet("/", () => Results.Text(
+    IndexWithVersion(Path.Combine(webDirectory, "index.html"), webDirectory),
+    "text/html; charset=utf-8"));
 
 app.MapGet("/api/session", (HttpContext context) => Results.Ok(new
 {
@@ -204,6 +206,45 @@ static bool IsLoopback(IPAddress? address)
     if (address.IsIPv4MappedToIPv6)
         address = address.MapToIPv4();
     return IPAddress.IsLoopback(address);
+}
+
+/// <summary>
+/// 读取 index.html 并给 app.js / styles.css 的根路径引用追加 <c>?v=&lt;最后修改时间戳&gt;</c>，
+/// 文件改动后版本参数自动变化，浏览器不会再用旧缓存——避免每次都要 Ctrl+F5。
+/// </summary>
+static string IndexWithVersion(string indexHtmlPath, string webDir)
+{
+    string html;
+    try
+    {
+        html = File.ReadAllText(indexHtmlPath);
+    }
+    catch
+    {
+        return "<!doctype html><meta charset=\"utf-8\"><title>BackDatabase Manage</title><p>页面资源加载失败。</p>";
+    }
+
+    foreach (var asset in new[] { "app.js", "styles.css" })
+    {
+        string version;
+        try
+        {
+            version = new FileInfo(Path.Combine(webDir, asset)).LastWriteTimeUtc.Ticks
+                .ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            version = "0";
+        }
+
+        html = System.Text.RegularExpressions.Regex.Replace(
+            html,
+            $"((?:href|src)\\s*=\\s*[\"'])\\/{System.Text.RegularExpressions.Regex.Escape(asset)}(\\?v=[^\"']*)?([\"'])",
+            $"$1/{asset}?v={version}$3",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    return html;
 }
 
 static HttpRequestData CreateAuthRequest(HttpContext context, string body = "", string? method = null)

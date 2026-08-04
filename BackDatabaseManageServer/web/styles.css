@@ -20,6 +20,9 @@ input:focus,select:focus { border-color:var(--green); box-shadow:0 0 0 3px rgba(
 .danger-link { border:0; padding:8px 0; color:var(--red); background:transparent; }
 .form-message { min-height:22px; color:var(--red); }
 .storage-hint { margin:-8px 0 16px; color:var(--muted); font-size:12px; }
+.toggle-eye { display:inline-block; width:auto; margin:-6px 0 12px; padding:7px 12px; border:1px solid var(--line); border-radius:8px; background:#edf4f0; color:var(--green-dark); font-size:13px; cursor:pointer; }
+.toggle-eye:hover { background:#e2ede7; }
+.toggle-eye,input[type=password]+.toggle-eye { vertical-align:middle; }
 .app { display:flex; min-height:100vh; }
 .sidebar { width:240px; position:sticky; top:0; height:100vh; display:flex; flex-direction:column; padding:28px 18px; color:#e9f4ee; background:var(--green-dark); overflow-y:auto; }
 .brand { display:flex; align-items:center; gap:10px; font-weight:700; line-height:1.15; }
