@@ -242,6 +242,11 @@ public static partial class ConfigWebService
         app.MapGet("/api/runs/{fileName}", (string fileName) =>
             Results.Ok(runRegistry?.GetView(fileName) ?? new BackupRunView { FileName = fileName }));
 
+        // 列出某个配置保存目录下所有 .sql 备份文件，按创建时间从新到旧编号返回。
+        // 用于界面「文件」按钮：查看历史备份文件清单。
+        app.MapGet("/api/configs/{fileName}/files", (string fileName) =>
+            ApiCall(() => store.ListBackupFiles(fileName, baseDir)));
+
         app.MapGet("/api/environment", () => ApiCall(store.GetEnvironment));
         app.MapPut("/api/environment", (EnvironmentWriteRequest request) =>
             ApiCall(() => store.SaveEnvironment(request)));
@@ -485,6 +490,43 @@ public static partial class ConfigWebService
             if (!File.Exists(path))
                 throw new FileNotFoundException($"配置 {fileName} 不存在。");
             return ConfigLoader.ParseFile(path);
+        }
+
+        /// <summary>
+        /// 列出某个配置保存目录下的所有 .sql 备份文件，按创建时间从新到旧编号。
+        /// 文件名包含的 UTC 时间戳不可靠时，退回 LastWriteTimeUtc 排序。
+        /// 目录不存在视为空列表（不报错），方便界面在首次备份前展示空状态。
+        /// </summary>
+        public IReadOnlyList<BackupFileView> ListBackupFiles(string routeFileName, string baseDir)
+        {
+            var config = LoadConfig(routeFileName);
+            var saveDir = config.ResolveSaveDir(baseDir);
+
+            var result = new List<BackupFileView>();
+            if (!Directory.Exists(saveDir))
+                return result;
+
+            foreach (var file in Directory.EnumerateFiles(saveDir, "*.sql")
+                         .Select(p => new FileInfo(p)))
+            {
+                result.Add(new BackupFileView
+                {
+                    Name = file.Name,
+                    SizeBytes = file.Length,
+                    CreatedAtUtc = file.CreationTimeUtc,
+                });
+            }
+
+            // 新文件在前：按 CreatedAtUtc 倒序；时间相同再按文件名倒序，保证稳定
+            return result
+                .OrderByDescending(f => f.CreatedAtUtc)
+                .ThenByDescending(f => f.Name, StringComparer.OrdinalIgnoreCase)
+                .Select((f, i) =>
+                {
+                    f.Index = i + 1; // 序号从 1 开始
+                    return f;
+                })
+                .ToList();
         }
 
         public EnvironmentView GetEnvironment()
@@ -824,6 +866,19 @@ public sealed class DiskInfoView
     public long TotalBytes { get; init; }
     /// <summary>盘符当前可用空间（字节）。</summary>
     public long FreeBytes { get; init; }
+}
+
+/// <summary>单个备份文件的展示视图，按创建时间从新到旧编号。</summary>
+public sealed class BackupFileView
+{
+    /// <summary>序号，从 1 开始（最新的为 1）。</summary>
+    public int Index { get; set; }
+    /// <summary>文件名，例如 users_db_2026-08-04__01.02.03.sql。</summary>
+    public string Name { get; set; } = "";
+    /// <summary>文件大小（字节）。</summary>
+    public long SizeBytes { get; init; }
+    /// <summary>文件创建时间（UTC）。</summary>
+    public DateTime CreatedAtUtc { get; init; }
 }
 
 public sealed class EnvironmentWriteRequest

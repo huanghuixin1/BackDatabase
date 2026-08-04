@@ -123,6 +123,25 @@
     </form>
   </dialog>
 
+  <!-- 备份文件列表弹窗 -->
+  <dialog id="files-dialog">
+    <div class="dialog-head">
+      <div><p class="eyebrow">BACKUP FILES</p><h2 id="files-dialog-title">备份文件</h2></div>
+      <button class="icon-button" type="button" id="close-files-dialog" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-body">
+      <p id="files-empty-msg" class="files-empty-msg" hidden>暂无备份文件</p>
+      <div id="files-table-wrapper" class="files-table-wrapper">
+        <table class="files-table">
+          <thead>
+            <tr><th>序号</th><th>文件名</th><th>大小</th><th>创建时间 (UTC)</th></tr>
+          </thead>
+          <tbody id="files-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/app.js" defer></script>
 </body>

@@ -125,10 +125,14 @@ function renderConfigs() {
     logBtn.className = 'ghost'; logBtn.textContent = '日志';
     logBtn.disabled = Boolean(config.error);
     logBtn.addEventListener('click', () => toggleLog(config.fileName, logBtn));
+    const filesBtn = document.createElement('button');
+    filesBtn.className = 'ghost'; filesBtn.textContent = '文件';
+    filesBtn.disabled = Boolean(config.error);
+    filesBtn.addEventListener('click', () => openFilesDialog(config.fileName));
     const remove = document.createElement('button');
     remove.className = 'ghost danger'; remove.textContent = '删除';
     remove.addEventListener('click', () => deleteConfig(config.fileName));
-    actions.append(edit, runNow, logBtn, remove);
+    actions.append(edit, runNow, logBtn, filesBtn, remove);
     card.append(actions);
 
     // 运行状态徽标 + 可折叠日志面板
@@ -180,6 +184,55 @@ function toggleLog(fileName, btn) {
   }
   const panel = document.querySelector(`.run-log[data-file-name="${CSS.escape(fileName)}"]`);
   if (panel) panel.hidden = !state.expandedLogs.has(fileName);
+}
+
+async function toggleFiles(fileName, btn) {
+  if (state.expandedFiles.has(fileName)) {
+    state.expandedFiles.delete(fileName);
+    btn.classList.remove('active');
+    renderConfigs();
+    return;
+  }
+  state.expandedFiles.add(fileName);
+  btn.classList.add('active');
+  await loadBackupFiles(fileName);
+  renderConfigs();
+}
+
+async function openFilesDialog(fileName) {
+  $('#files-dialog-title').textContent = fileName.replace(/\.conf$/i, '');
+  $('#files-tbody').innerHTML = '';
+  $('#files-empty-msg').hidden = true;
+  $('#files-table-wrapper').hidden = true;
+  const dialog = $('#files-dialog');
+  dialog.showModal();
+  try {
+    const files = await api(`/api/configs/${encodeURIComponent(fileName)}/files`);
+    const list = Array.isArray(files) ? files : [];
+    if (!list.length) {
+      $('#files-empty-msg').hidden = false;
+      return;
+    }
+    $('#files-table-wrapper').hidden = false;
+    list.forEach(f => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${f.index}</td>
+        <td title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</td>
+        <td>${formatFileSize(f.sizeBytes)}</td>
+        <td>${f.createdAtUtc ? new Date(f.createdAtUtc).toLocaleString('zh-CN', { hour12: false }) + ' UTC' : '—'}</td>`;
+      $('#files-tbody').appendChild(tr);
+    });
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+function formatFileSize(bytes) {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return (bytes / Math.pow(1024, i)).toFixed(i > 1 ? 2 : 0) + ' ' + units[i];
 }
 
 async function triggerBackup(fileName, btn) {
@@ -503,6 +556,7 @@ $('#refresh-button').addEventListener('click', loadConfigs);
 $('#backup-all-button').addEventListener('click', backupAll);
 $('#close-dialog').addEventListener('click', () => dialog.close());
 $('#cancel-dialog').addEventListener('click', () => dialog.close());
+$('#close-files-dialog').addEventListener('click', () => $('#files-dialog').close());
 $('#password-toggle').addEventListener('click', () => {
   const input = form.elements.password;
   input.type = input.type === 'password' ? 'text' : 'password';
