@@ -184,6 +184,54 @@ public static partial class ConfigWebService
             }
         });
 
+        // 立即备份全部配置：从磁盘读取每个 .conf，逐个后台执行一次。
+        // 已有备份在跑的配置会被 RunAsync 跳过（返回 false），不影响其它配置。
+        app.MapPost("/api/configs/backup-all", () =>
+        {
+            if (runner is null || runRegistry is null)
+                return Results.Problem("备份执行器未配置。", statusCode: 500);
+
+            var configs = store.List().ToList();
+            if (configs.Count == 0)
+                return Results.Ok(new { message = "暂无可备份的配置。", triggered = 0 });
+
+            var triggered = 0;
+            foreach (var view in configs)
+            {
+                if (!string.IsNullOrEmpty(view.Error))
+                    continue; // 配置本身有错误，跳过
+                BackupConfig config;
+                try
+                {
+                    config = store.LoadConfig(view.FileName);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[backup-all] 加载配置 {view.FileName} 失败: {ex.Message}");
+                    continue;
+                }
+
+                triggered++;
+                // 捕获循环变量，避免闭包共享
+                var captured = config;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var ran = await runner.RunAsync(captured, "manual", cancellationToken: default);
+                        if (!ran)
+                            Console.WriteLine($"[{Path.GetFileName(captured.SourceFile)}] 全量备份跳过：已有备份在运行");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"全量备份异常 [{Path.GetFileName(captured.SourceFile)}]: {ex.Message}");
+                    }
+                });
+            }
+
+            return Results.Ok(new { message = $"已触发 {triggered} 个任务的备份，请查看运行状态。", triggered });
+        });
+
         // 查询所有配置最新运行状态
         app.MapGet("/api/runs", () =>
             runRegistry is null

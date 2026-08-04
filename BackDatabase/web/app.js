@@ -199,6 +199,23 @@ async function triggerBackup(fileName, btn) {
   }
 }
 
+async function backupAll() {
+  const btn = $('#backup-all-button');
+  btn.disabled = true;
+  try {
+    const res = await api('/api/configs/backup-all', { method: 'POST' });
+    toast(res.message);
+    // 展开所有任务的日志面板，方便观察进度
+    state.configs.forEach(c => state.expandedLogs.add(c.fileName));
+    await loadRuns();
+    ensureRunsPolling();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 let runsPollTimer = null;
 async function loadRuns() {
   try {
@@ -483,6 +500,7 @@ document.querySelectorAll('.nav-item').forEach(button => button.addEventListener
 $('#add-button').addEventListener('click', () => openDialog());
 $('#empty-add').addEventListener('click', () => openDialog());
 $('#refresh-button').addEventListener('click', loadConfigs);
+$('#backup-all-button').addEventListener('click', backupAll);
 $('#close-dialog').addEventListener('click', () => dialog.close());
 $('#cancel-dialog').addEventListener('click', () => dialog.close());
 $('#password-toggle').addEventListener('click', () => {

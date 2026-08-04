@@ -73,9 +73,18 @@ public sealed class BackupScheduler
         if (config.IntervalMinutes is { } minutes)
         {
             // ---------- 间隔模式 ----------
-            // 与 Go 版一致：先备份，再 sleep，再备份……
+            // 启动后先等待一个周期再首次备份（不再启动即跑），避免重启时所有任务集中触发。
             while (!ct.IsCancellationRequested)
             {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMinutes(minutes), ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break; // 收到停止信号
+                }
+
                 try
                 {
                     // 跳过与手动立即备份互斥：该配置已在跑时 RunAsync 返回 false
@@ -91,15 +100,6 @@ public sealed class BackupScheduler
                 {
                     // 单次异常不退出循环，继续下一轮
                     Console.WriteLine($"[{name}] 备份异常: {ex.Message}");
-                }
-
-                try
-                {
-                    await Task.Delay(TimeSpan.FromMinutes(minutes), ct).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    break; // 收到停止信号
                 }
             }
         }
