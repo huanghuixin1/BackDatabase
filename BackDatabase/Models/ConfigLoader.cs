@@ -138,6 +138,57 @@ public static class ConfigLoader
             MaxFiles = maxFiles,
             IntervalMinutes = intervalMinutes,
             DailyAtUtc = dailyAtUtc,
+            DbSchedules = ParseDbSchedules(Get("dbtimes", ""), databases),
         };
+    }
+
+    /// <summary>
+    /// 解析 dbtimes 配置项，格式：db1:60,db2:02:00,db3:30
+    /// 每个 entry 形如「库名:计划」，计划同 backtime 规则（数字=分钟 / HH:mm=每日定点 UTC）。
+    /// 仅保留在 databases 列表里的库；忽略解析失败的 entry（不抛错，保持其它库可用）。
+    /// </summary>
+    private static IReadOnlyDictionary<string, DbSchedule> ParseDbSchedules(string raw, IReadOnlyList<string> databases)
+    {
+        var result = new Dictionary<string, DbSchedule>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(raw))
+            return result;
+
+        var dbSet = new HashSet<string>(databases, StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var colon = entry.IndexOf(':');
+            if (colon <= 0 || colon >= entry.Length - 1)
+                continue; // 没有 ":" 或分隔位置错误，跳过
+
+            var db = entry[..colon].Trim();
+            var time = entry[(colon + 1)..].Trim();
+            if (!dbSet.Contains(db))
+                continue; // 不在 dbs 列表里的库，忽略
+
+            var schedule = ParseSingleSchedule(time);
+            if (schedule.IsInvalid)
+                continue; // 计划无效，跳过该库（沿用任务级默认）
+
+            result[db] = schedule;
+        }
+
+        return result;
+    }
+
+    /// <summary>把单个时间字符串解析为计划。数字→间隔分钟；HH:mm→每日定点。</summary>
+    internal static DbSchedule ParseSingleSchedule(string time)
+    {
+        if (double.TryParse(time, NumberStyles.Float, CultureInfo.InvariantCulture, out var minutes) && minutes > 0)
+            return new DbSchedule(minutes, null);
+
+        var parts = time.Split(':', StringSplitOptions.TrimEntries);
+        if (parts.Length >= 2
+            && int.TryParse(parts[0], out var hour)
+            && int.TryParse(parts[1], out var minute)
+            && hour is >= 0 and <= 23
+            && minute is >= 0 and <= 59)
+            return new DbSchedule(null, (hour, minute));
+
+        return default; // 无效
     }
 }

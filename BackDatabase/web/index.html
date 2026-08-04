@@ -128,9 +128,20 @@
         <label class="field"><span>用户名</span><input name="user" required value="root" autocomplete="username"></label>
         <label class="field wide"><span>密码</span><div class="suffix-input"><input name="password" type="password" autocomplete="new-password" placeholder="编辑时留空可保留原密码"><button type="button" class="toggle-eye" id="password-toggle" aria-label="显示/隐藏密码">👁</button></div><small id="password-hint">新配置可留空，适用于无密码连接。</small></label>
         <label class="checkbox wide"><input name="clearPassword" type="checkbox"> 清除已保存的数据库密码</label>
-        <label class="field wide"><span>数据库</span><input name="databases" required placeholder="app, analytics"><small>多个数据库使用英文逗号分隔</small></label>
+        <label class="field wide"><span>数据库</span><input name="databases" id="databases-input" required placeholder="app, analytics"><small>多个数据库使用英文逗号分隔</small></label>
         <label class="field"><span>备份计划</span><input name="backtime" required value="60"><small>分钟数，或每日 UTC 时刻 HH:mm</small></label>
         <label class="field"><span>最大保留数量</span><input name="maxFiles" type="number" min="1" required value="180"></label>
+        <div class="field wide" id="db-schedule-field">
+          <span>每库备份计划（可选）</span>
+          <small>为单个库单独设置计划；选「沿用任务级」的库使用上面的「备份计划」。</small>
+          <div class="db-schedule-wrap">
+            <table class="db-schedule-table" id="db-schedule-table">
+              <thead><tr><th>数据库</th><th>计划类型</th><th class="db-sched-value-col">值</th><th>说明</th></tr></thead>
+              <tbody id="db-schedule-tbody"></tbody>
+            </table>
+            <p class="db-schedule-empty" id="db-schedule-empty">先在「数据库」里填库名（逗号分隔），每填一个会自动出现一行。</p>
+          </div>
+        </div>
         <label class="field wide"><span>保存目录</span><input name="saveDir" required value="/backup/"><small>相对于程序目录，例如 /backup/</small><small id="disk-info" class="disk-info" hidden></small></label>
       </div>
       <div class="dialog-actions"><button class="ghost" type="button" id="cancel-dialog">取消</button><button class="primary" type="submit">保存配置</button></div>
@@ -149,13 +160,15 @@
         <select id="files-filter"><option value="all">全部文件</option><option value="today">今天</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option></select>
         <label for="files-database-filter">数据库</label>
         <select id="files-database-filter"><option value="all">全部数据库</option></select>
+        <label for="files-group-by">分组</label>
+        <select id="files-group-by"><option value="database">按数据库</option><option value="date">按日期</option><option value="none">不分组</option></select>
         <span id="files-summary" class="files-summary"></span>
       </div>
       <p id="files-empty-msg" class="files-empty-msg" hidden>暂无备份文件</p>
       <div id="files-table-wrapper" class="files-table-wrapper">
         <table class="files-table">
           <thead>
-            <tr><th>序号</th><th>文件名</th><th>大小</th><th>创建时间 (UTC)</th></tr>
+            <tr><th>序号</th><th>文件名</th><th>数据库</th><th>大小</th><th>创建时间 (UTC)</th></tr>
           </thead>
           <tbody id="files-tbody"></tbody>
         </table>

@@ -10,7 +10,7 @@ using Microsoft.AspNetCore.Hosting; // UseUrls 扩展方法所在命名空间
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
 // 版本号
-var version = "1.8";
+var version = "1.9";
 Console.WriteLine($"{DateTime.UtcNow:yyyy-MM-dd_HH:mm:ss} 当前版本: {version}, 服务开启成功...");
 
 // 与 Go 版一致：以可执行文件所在目录为根目录（不是当前工作目录）

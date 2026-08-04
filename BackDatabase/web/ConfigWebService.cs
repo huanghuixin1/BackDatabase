@@ -152,31 +152,51 @@ public static partial class ConfigWebService
             ApiCall(() => store.Purge(fileName)));
 
         // 立即备份：从磁盘读取最新 .conf 后执行一次，不影响调度器。
-        // 已有备份在跑时回 409，避免同配置并发。
-        app.MapPost("/api/configs/{fileName}/backup", (string fileName) =>
+        // 如指定 ?db=xxx 则只备份该库，否则备份任务的全部库（每个库各起一次运行）。
+        app.MapPost("/api/configs/{fileName}/backup", (string fileName, string? db) =>
         {
             if (runner is null || runRegistry is null)
                 return Results.Problem("备份执行器未配置。", statusCode: 500);
             try
             {
                 var config = store.LoadConfig(fileName);
-                // 后台执行：RunAsync 内部会自行 BeginRun/FinishRun（取锁、记状态、写日志、释放），
-                // 返回 false 表示该配置已有备份在跑——回 409，不再重复取锁/释放。
-                // 后台执行，不阻塞 HTTP 响应
+                // 后台执行：RunAsync 内部会自行 BeginRun/FinishRun（取锁、记状态、写日志、释放）。
+                // 返回 false 表示该库已有备份在跑——打日志即可（HTTP 已先回复 200）。
                 _ = Task.Run(async () =>
                 {
-                    try
+                    var name = Path.GetFileName(config.SourceFile);
+                    if (!string.IsNullOrWhiteSpace(db))
                     {
-                        var ran = await runner.RunAsync(config, "manual", cancellationToken: default);
-                        if (!ran)
+                        try
                         {
-                            // 已有备份在跑：这里不回 HTTP（响应已发出），打日志即可
-                            Console.WriteLine($"[{Path.GetFileName(config.SourceFile)}] 立即备份跳过：已有备份在运行");
+                            var ran = await runner.RunAsync(config, "manual", db, cancellationToken: default);
+                            if (!ran)
+                                Console.WriteLine($"[{name}/{db}] 立即备份跳过：已有备份在运行");
                         }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"立即备份异常 [{name}/{db}]: {ex.Message}");
+                        }
+                        return;
                     }
-                    catch (Exception ex)
+
+                    // 未指定库：对任务下每个库各触发一次后台备份
+                    foreach (var database in config.Databases)
                     {
-                        Console.WriteLine($"立即备份异常: {ex.Message}");
+                        var captured = database;
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                var ran = await runner.RunAsync(config, "manual", captured, cancellationToken: default);
+                                if (!ran)
+                                    Console.WriteLine($"[{name}/{captured}] 立即备份跳过：已有备份在运行");
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"立即备份异常 [{name}/{captured}]: {ex.Message}");
+                            }
+                        });
                     }
                 });
                 return Results.Ok(new { message = "已开始备份，请查看运行状态。" });
@@ -219,21 +239,25 @@ public static partial class ConfigWebService
                 }
 
                 triggered++;
-                // 捕获循环变量，避免闭包共享
-                var captured = config;
-                _ = Task.Run(async () =>
+                // 对该配置下的每个库各触发一次后台备份
+                foreach (var database in config.Databases)
                 {
-                    try
+                    var capturedConfig = config;
+                    var capturedDb = database;
+                    _ = Task.Run(async () =>
                     {
-                        var ran = await runner.RunAsync(captured, "manual", cancellationToken: default);
-                        if (!ran)
-                            Console.WriteLine($"[{Path.GetFileName(captured.SourceFile)}] 全量备份跳过：已有备份在运行");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"全量备份异常 [{Path.GetFileName(captured.SourceFile)}]: {ex.Message}");
-                    }
-                });
+                        try
+                        {
+                            var ran = await runner.RunAsync(capturedConfig, "manual", capturedDb, cancellationToken: default);
+                            if (!ran)
+                                Console.WriteLine($"[{Path.GetFileName(capturedConfig.SourceFile)}/{capturedDb}] 全量备份跳过：已有备份在运行");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"全量备份异常 [{Path.GetFileName(capturedConfig.SourceFile)}/{capturedDb}]: {ex.Message}");
+                        }
+                    });
+                }
             }
 
             return Results.Ok(new { message = $"已触发 {triggered} 个任务的备份，请查看运行状态。", triggered });
@@ -245,9 +269,10 @@ public static partial class ConfigWebService
                 ? Results.Ok(Array.Empty<BackupRunView>())
                 : Results.Ok(runRegistry.GetAllViews()));
 
-        // 查询单个配置最新运行状态
+        // 查询某个配置下所有库的最新运行状态列表
         app.MapGet("/api/runs/{fileName}", (string fileName) =>
-            Results.Ok(runRegistry?.GetView(fileName) ?? new BackupRunView { FileName = fileName }));
+            Results.Ok(runRegistry?.GetViewsForConfig(fileName)
+                      ?? (IReadOnlyList<BackupRunView>)Array.Empty<BackupRunView>()));
 
         // 列出某个配置保存目录下所有 .sql 备份文件，按创建时间从新到旧编号返回。
         // 用于界面「文件」按钮：查看历史备份文件清单。
@@ -469,8 +494,13 @@ public static partial class ConfigWebService
                     $"savedir={request.SaveDir.Trim()}",
                     $"maxfiles={request.MaxFiles.ToString(CultureInfo.InvariantCulture)}",
                 };
+                // dbtimes 为空时不写该行，保持旧 conf 干净
+                var dbTimes = (request.DbTimes ?? "").Trim();
+                var content = string.Join(Environment.NewLine, lines) + Environment.NewLine;
+                if (!string.IsNullOrEmpty(dbTimes))
+                    content += $"dbtimes={dbTimes}{Environment.NewLine}";
 
-                AtomicWrite(path, string.Join(Environment.NewLine, lines) + Environment.NewLine);
+                AtomicWrite(path, content);
                 // 用正式解析器做最终校验；失败时会向调用方报告。
                 var saved = ConfigLoader.ParseFile(path);
                 return new { message = "配置已保存，重启 BackDatabase 后生效。", config = ToView(saved) };
@@ -595,12 +625,20 @@ public static partial class ConfigWebService
             if (!Directory.Exists(saveDir))
                 return result;
 
+            // 文件名格式：{db}_{UTC时间}.sql。提取前导 db 作为分组键。
+            var knownDbs = new HashSet<string>(config.Databases, StringComparer.OrdinalIgnoreCase);
             foreach (var file in Directory.EnumerateFiles(saveDir, "*.sql")
                          .Select(p => new FileInfo(p)))
             {
+                var name = file.Name;
+                var db = ExtractDatabase(name);
+                // 不在配置库里（无法识别）的文件归到一个独立组
+                if (!string.IsNullOrEmpty(db) && !knownDbs.Contains(db))
+                    db = "_other";
                 result.Add(new BackupFileView
                 {
-                    Name = file.Name,
+                    Name = name,
+                    Database = db,
                     SizeBytes = file.Length,
                     CreatedAtUtc = file.LastWriteTimeUtc,
                 });
@@ -782,6 +820,7 @@ public static partial class ConfigWebService
             ValidateSingleLine(request.Databases, "数据库列表");
             ValidateSingleLine(request.SaveDir, "保存目录");
             ValidateSingleLine(request.Backtime, "备份计划");
+            ValidateSingleLine(request.DbTimes, "每库备份计划", allowEmpty: true);
 
             if (!int.TryParse(request.Port, out var port) || port is < 1 or > 65535)
                 throw new ConfigValidationException("端口必须是 1 到 65535 之间的整数。");
@@ -802,6 +841,27 @@ public static partial class ConfigWebService
             }
             if (!validSchedule)
                 throw new ConfigValidationException("备份计划应为大于 0 的分钟数，或 UTC 时间 HH:mm。");
+
+            // 校验 dbtimes：每个 entry 形如「库名:计划」，库名必须在 dbs 列表里，计划须合法
+            var dbSet = new HashSet<string>(
+                request.Databases.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                StringComparer.OrdinalIgnoreCase);
+            var dbTimesRaw = (request.DbTimes ?? "").Trim();
+            if (!string.IsNullOrEmpty(dbTimesRaw))
+            {
+                foreach (var entry in dbTimesRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    var colon = entry.IndexOf(':');
+                    if (colon <= 0 || colon >= entry.Length - 1)
+                        throw new ConfigValidationException($"每库备份计划格式错误: {entry}（应为 库名:分钟 或 库名:HH:mm）");
+                    var db = entry[..colon].Trim();
+                    var t = entry[(colon + 1)..].Trim();
+                    if (!dbSet.Contains(db))
+                        throw new ConfigValidationException($"每库备份计划里的 {db} 未在数据库列表中。");
+                    if (ConfigLoader.ParseSingleSchedule(t).IsInvalid)
+                        throw new ConfigValidationException($"每库备份计划 {db} 的时间无效: {t}（应为大于 0 的分钟数，或 HH:mm）");
+                }
+            }
 
             var relative = request.SaveDir.Replace('\\', '/').TrimStart('/');
             var savePath = Path.GetFullPath(Path.Combine(_baseDir, relative));
@@ -867,21 +927,38 @@ public static partial class ConfigWebService
                 throw new ConfigValidationException("访问口令至少 6 位。");
         }
 
-        private static BackupConfigView ToView(BackupConfig config) => new()
+        private static BackupConfigView ToView(BackupConfig config)
         {
-            FileName = Path.GetFileName(config.SourceFile),
-            DbType = config.DbType,
-            Host = config.Host,
-            Port = config.Port,
-            User = config.User,
-            PasswordConfigured = !string.IsNullOrEmpty(config.Password),
-            Password = config.Password,
-            Databases = string.Join(',', config.Databases),
-            SaveDir = config.SaveDirRelative,
-            MaxFiles = config.MaxFiles,
-            Backtime = config.IntervalMinutes?.ToString(CultureInfo.InvariantCulture)
-                       ?? $"{config.DailyAtUtc!.Value.Hour:00}:{config.DailyAtUtc.Value.Minute:00}",
-        };
+            var backtime = config.IntervalMinutes?.ToString(CultureInfo.InvariantCulture)
+                           ?? (config.DailyAtUtc is { } d ? $"{d.Hour:00}:{d.Minute:00}" : "60");
+
+            // dbtimes 视图：库名:计划（沿用任务级 backtime 格式化规则）
+            var dbTimes = config.DbSchedules
+                .Select(kv =>
+                {
+                    var s = kv.Value;
+                    var t = s.IntervalMinutes?.ToString(CultureInfo.InvariantCulture)
+                            ?? $"{s.DailyAtUtc!.Value.Hour:00}:{s.DailyAtUtc.Value.Minute:00}";
+                    return $"{kv.Key}:{t}";
+                })
+                .ToList();
+
+            return new BackupConfigView
+            {
+                FileName = Path.GetFileName(config.SourceFile),
+                DbType = config.DbType,
+                Host = config.Host,
+                Port = config.Port,
+                User = config.User,
+                PasswordConfigured = !string.IsNullOrEmpty(config.Password),
+                Password = config.Password,
+                Databases = string.Join(',', config.Databases),
+                SaveDir = config.SaveDirRelative,
+                MaxFiles = config.MaxFiles,
+                Backtime = backtime,
+                DbTimes = string.Join(',', dbTimes),
+            };
+        }
 
         private static void AtomicWrite(string path, string content)
         {
@@ -900,6 +977,22 @@ public static partial class ConfigWebService
 
         [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", RegexOptions.CultureInvariant)]
         private static partial Regex SafeFileName();
+
+        /// <summary>
+        /// 从备份文件名提取库名。文件名格式：{db}_{yyyy-MM-dd__HH.mm.ss}.sql
+        /// （见 BackupRunner.BackupOneDatabase）。库名本身可能含下划线，
+        /// 所以按结尾的时间戳来切，而不是找最后一个下划线。无法识别返回空。
+        /// </summary>
+        private static string ExtractDatabase(string fileName)
+        {
+            var name = Path.GetFileNameWithoutExtension(fileName);
+            var match = BackupFileName().Match(name);
+            return match.Success ? match.Groups[1].Value : "";
+        }
+
+        /// <summary>匹配 {库名}_{yyyy-MM-dd__HH.mm.ss}，组1=库名。</summary>
+        [GeneratedRegex(@"^(.+)_\d{4}-\d{2}-\d{2}__\d{2}\.\d{2}\.\d{2}$", RegexOptions.CultureInvariant)]
+        private static partial Regex BackupFileName();
     }
 }
 
@@ -917,6 +1010,8 @@ public sealed class BackupConfigView
     public string SaveDir { get; init; } = "/backup/";
     public int MaxFiles { get; init; } = 180;
     public string Backtime { get; init; } = "60";
+    /// <summary>每个库的单独备份计划，格式 db1:60,db2:02:00；空表示全部沿用任务级 Backtime。</summary>
+    public string DbTimes { get; init; } = "";
     public string? Error { get; init; }
 }
 
@@ -933,6 +1028,8 @@ public sealed class BackupConfigWriteRequest
     public string SaveDir { get; init; } = "/backup/";
     public int MaxFiles { get; init; } = 180;
     public string Backtime { get; init; } = "60";
+    /// <summary>每个库的单独备份计划，格式 db1:60,db2:02:00；空表示全部沿用 Backtime。</summary>
+    public string DbTimes { get; init; } = "";
 }
 
 public sealed class EnvironmentView
@@ -964,6 +1061,8 @@ public sealed class BackupFileView
     public int Index { get; set; }
     /// <summary>文件名，例如 users_db_2026-08-04__01.02.03.sql。</summary>
     public string Name { get; set; } = "";
+    /// <summary>所属库名（从文件名前导部分解析）；无法识别时为 "_other"。</summary>
+    public string Database { get; set; } = "";
     /// <summary>文件大小（字节）。</summary>
     public long SizeBytes { get; init; }
     /// <summary>文件创建时间（UTC）。</summary>

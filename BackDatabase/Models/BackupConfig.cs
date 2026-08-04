@@ -52,6 +52,7 @@ public sealed class BackupConfig
     /// 与 <see cref="DailyAtUtc"/> 二选一：
     /// conf 的 backtime 能解析为数字 → 走间隔模式；
     /// 解析为 HH:mm → 走每日定点模式。
+    /// 这是任务级默认计划；未被 <see cref="DbSchedules"/> 单独配置的库都沿用此计划。
     /// </summary>
     public double? IntervalMinutes { get; init; }
 
@@ -60,6 +61,19 @@ public sealed class BackupConfig
     /// 注意：与 Go 版一样使用 UTC，不是本地时区。
     /// </summary>
     public (int Hour, int Minute)? DailyAtUtc { get; init; }
+
+    /// <summary>
+    /// 每个库单独的备份计划（来自 conf 的 dbtimes）。
+    /// key=库名，value=该库的计划。未在此字典中出现的库沿用任务级
+    /// <see cref="IntervalMinutes"/>/<see cref="DailyAtUtc"/>。
+    /// </summary>
+    public IReadOnlyDictionary<string, DbSchedule> DbSchedules { get; init; } = new Dictionary<string, DbSchedule>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 返回某个库的生效计划：优先 <see cref="DbSchedules"/>，否则任务级默认。
+    /// </summary>
+    public DbSchedule EffectiveSchedule(string database)
+        => DbSchedules.TryGetValue(database, out var s) ? s : new DbSchedule(IntervalMinutes, DailyAtUtc);
 
     /// <summary>
     /// 将 conf 中的相对 savedir 解析为绝对路径。
@@ -72,4 +86,16 @@ public sealed class BackupConfig
         var relative = SaveDirRelative.Replace('\\', '/').TrimStart('/');
         return Path.GetFullPath(Path.Combine(baseDir, relative));
     }
+}
+
+/// <summary>
+/// 单个数据库的备份计划。两种模式互斥：间隔分钟 或 每日定点。
+/// </summary>
+public readonly record struct DbSchedule(double? IntervalMinutes, (int Hour, int Minute)? DailyAtUtc)
+{
+    /// <summary>是否为每日定点模式。</summary>
+    public bool IsDaily => IntervalMinutes is null && DailyAtUtc is not null;
+
+    /// <summary>是否为无效计划（两者都为空）。</summary>
+    public bool IsInvalid => IntervalMinutes is null && DailyAtUtc is null;
 }

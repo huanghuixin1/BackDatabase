@@ -51,12 +51,14 @@ public sealed class BackupRunner
 
     /// <summary>
     /// 异步执行一次备份，并把过程记录到 <see cref="BackupRunRegistry"/>。
-    /// 返回 false 表示该配置已有备份在运行（取锁失败）。
+    /// 返回 false 表示该库已有备份在运行（取锁失败）。
     /// 单次异常按现有约定不抛出（吞掉并记为 failed），返回 true 表示已执行。
     /// </summary>
+    /// <param name="database">指定单个库执行；为 null/空时备份整个任务的全部库（旧路径，取一把任务级锁）。</param>
     public async Task<bool> RunAsync(
         BackupConfig config,
         string trigger,
+        string? database = null,
         CancellationToken cancellationToken = default)
     {
         if (_registry is null)
@@ -64,7 +66,7 @@ public sealed class BackupRunner
             // 未注入注册表时退化为同步执行
             try
             {
-                RunCore(config, null, null, cancellationToken);
+                RunCore(config, string.IsNullOrEmpty(database) ? null : new[] { database }, null, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -77,7 +79,7 @@ public sealed class BackupRunner
             return true;
         }
 
-        var handle = _registry.BeginRun(config, trigger);
+        var handle = _registry.BeginRun(config, database ?? "", trigger);
         if (handle is null)
             return false;
 
@@ -85,7 +87,7 @@ public sealed class BackupRunner
         string? error = null;
         try
         {
-            RunCore(config, null, handle, cancellationToken);
+            RunCore(config, string.IsNullOrEmpty(database) ? null : new[] { database }, handle, cancellationToken);
             success = true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

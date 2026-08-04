@@ -4,9 +4,10 @@ namespace BackDatabase.Services;
 
 /// <summary>
 /// 备份任务调度器。
-/// 每个 <see cref="BackupConfig"/> 对应一个长期运行的后台任务：
-/// - 间隔模式：立即执行一次，然后每隔 N 分钟再执行（对齐 Go 的 for { invoke; sleep }）；
+/// 「每个配置 × 每个库」对应一个独立后台循环，各自按自己的计划运行：
+/// - 间隔模式：先等待一个周期再首次备份，之后每隔 N 分钟执行（不再启动即跑）；
 /// - 每日模式：约每 40 秒检查一次 UTC 时分，到点且当天未跑过则执行。
+/// 同任务下不同库的循环彼此独立、可并行；同一库的「手动立即备份」与本循环互斥（由 RunRegistry 取锁保证）。
 /// </summary>
 public sealed class BackupScheduler
 {
@@ -24,15 +25,25 @@ public sealed class BackupScheduler
     }
 
     /// <summary>
-    /// 为每个配置启动一个独立后台循环（互不阻塞）。
+    /// 为每个配置的每个库各启动一个独立后台循环。
     /// </summary>
     public void StartAll(IEnumerable<BackupConfig> configs)
     {
         foreach (var config in configs)
         {
-            // 闭包捕获当前 config，避免循环变量问题
-            var captured = config;
-            _workers.Add(Task.Run(() => RunLoopAsync(captured, _cts.Token), _cts.Token));
+            var name = Path.GetFileName(config.SourceFile);
+            var saveDir = config.ResolveSaveDir(AppContext.BaseDirectory);
+            Console.WriteLine(
+                $"数据库正在备份准备中: {config.Host}。保存路径为:{saveDir} 最大保存数量：{config.MaxFiles} 配置:{name}");
+            Console.WriteLine($"数据库类型 {config.DbType}，库数量：{config.Databases.Count}");
+
+            foreach (var db in config.Databases)
+            {
+                var capturedConfig = config;
+                var capturedDb = db;
+                _workers.Add(Task.Run(
+                    () => RunLoopAsync(capturedConfig, capturedDb, _cts.Token), _cts.Token));
+            }
         }
     }
 
@@ -59,21 +70,24 @@ public sealed class BackupScheduler
     }
 
     /// <summary>
-    /// 单个配置的调度主循环。
+    /// 单个「配置+库」的调度主循环，按该库生效计划运行。
     /// </summary>
-    private async Task RunLoopAsync(BackupConfig config, CancellationToken ct)
+    private async Task RunLoopAsync(BackupConfig config, string database, CancellationToken ct)
     {
         var name = Path.GetFileName(config.SourceFile);
-        // 日志里打印解析后的绝对保存路径，方便排查
-        var saveDir = config.ResolveSaveDir(AppContext.BaseDirectory);
-        Console.WriteLine(
-            $"数据库正在备份准备中: {config.Host}。保存路径为:{saveDir} 最大保存数量：{config.MaxFiles} 配置:{name}");
-        Console.WriteLine($"数据库类型 {config.DbType}");
+        var schedule = config.EffectiveSchedule(database);
 
-        if (config.IntervalMinutes is { } minutes)
+        if (schedule.IsInvalid)
+        {
+            // ConfigLoader 已保证任务级默认有效；这里兜底
+            Console.WriteLine($"[{name}/{database}] 无效的备份计划，跳过");
+            return;
+        }
+
+        if (schedule.IntervalMinutes is { } minutes)
         {
             // ---------- 间隔模式 ----------
-            // 启动后先等待一个周期再首次备份（不再启动即跑），避免重启时所有任务集中触发。
+            // 启动后先等待一个周期再首次备份（不再启动即跑），避免重启时集中触发。
             while (!ct.IsCancellationRequested)
             {
                 try
@@ -87,10 +101,9 @@ public sealed class BackupScheduler
 
                 try
                 {
-                    // 跳过与手动立即备份互斥：该配置已在跑时 RunAsync 返回 false
-                    var ran = await _runner.RunAsync(config, "schedule", ct).ConfigureAwait(false);
+                    var ran = await _runner.RunAsync(config, "schedule", database, ct).ConfigureAwait(false);
                     if (!ran)
-                        Console.WriteLine($"[{name}] 跳过本轮备份：已有备份正在运行");
+                        Console.WriteLine($"[{name}/{database}] 跳过本轮备份：已有备份正在运行");
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
@@ -98,16 +111,14 @@ public sealed class BackupScheduler
                 }
                 catch (Exception ex)
                 {
-                    // 单次异常不退出循环，继续下一轮
-                    Console.WriteLine($"[{name}] 备份异常: {ex.Message}");
+                    Console.WriteLine($"[{name}/{database}] 备份异常: {ex.Message}");
                 }
             }
         }
-        else if (config.DailyAtUtc is { } daily)
+        else if (schedule.DailyAtUtc is { } daily)
         {
             // ---------- 每日定点模式（UTC）----------
-            // Go 版每 40 秒看一次当前 UTC 时分是否匹配；
-            // 这里额外记录 lastRunDate，避免同一分钟内被轮询多次而重复备份。
+            // 每 40 秒看一次当前 UTC 时分是否匹配；当天跑过就不再重复。
             var lastRunDate = DateOnly.MinValue;
             while (!ct.IsCancellationRequested)
             {
@@ -120,9 +131,9 @@ public sealed class BackupScheduler
                     lastRunDate = today;
                     try
                     {
-                        var ran = await _runner.RunAsync(config, "schedule", ct).ConfigureAwait(false);
+                        var ran = await _runner.RunAsync(config, "schedule", database, ct).ConfigureAwait(false);
                         if (!ran)
-                            Console.WriteLine($"[{name}] 跳过本次备份：已有备份正在运行");
+                            Console.WriteLine($"[{name}/{database}] 跳过本次备份：已有备份正在运行");
                     }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested)
                     {
@@ -130,13 +141,12 @@ public sealed class BackupScheduler
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"[{name}] 备份异常: {ex.Message}");
+                        Console.WriteLine($"[{name}/{database}] 备份异常: {ex.Message}");
                     }
                 }
 
                 try
                 {
-                    // 约 40 秒轮询一次，对齐 Go：time.Sleep(40 * time.Second)
                     await Task.Delay(TimeSpan.FromSeconds(40), ct).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
@@ -144,11 +154,6 @@ public sealed class BackupScheduler
                     break;
                 }
             }
-        }
-        else
-        {
-            // 理论上 ConfigLoader 已保证二选一，这里兜底
-            Console.WriteLine($"[{name}] 无效的 backtime 配置，跳过");
         }
     }
 }

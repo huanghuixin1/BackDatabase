@@ -68,29 +68,47 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-family: Georgia, serif;
 .files-toolbar select { width:auto; min-width:150px; padding:8px 10px; }
 .files-summary { margin-left:auto; color:var(--muted); font-size:12px; }
 .files-table-wrapper { width:100%; max-height:420px; overflow:auto; border:1px solid var(--line); border-radius:10px; }
-.files-table { width:100%; min-width:620px; table-layout:fixed; border-collapse:collapse; font-size:12px; }
-.files-table th:nth-child(1), .files-table td:nth-child(1) { width:58px; }
-.files-table th:nth-child(2), .files-table td:nth-child(2) { width:auto; }
-.files-table th:nth-child(3), .files-table td:nth-child(3) { width:100px; }
-.files-table th:nth-child(4), .files-table td:nth-child(4) { width:190px; }
+.files-table { width:100%; min-width:0; table-layout:fixed; border-collapse:collapse; font-size:12px; }
 .files-table th { position: sticky; top: 0; background: #f0f5f2; text-align: left; padding: 9px 12px; color: var(--muted); font-weight: 650; font-size: 11px; border-bottom: 1px solid var(--line); }
 .files-table td { padding: 8px 12px; border-bottom: 1px solid #eef2ef; color: var(--ink); }
 .files-table tr:last-child td { border-bottom: 0; }
-.files-table td:nth-child(1) { color: var(--muted); width: 48px; text-align: center; }
+/* 列宽：序号 / 文件名(自适应) / 数据库 / 大小 / 时间 */
+.files-table th:nth-child(1), .files-table td:nth-child(1) { width:58px; text-align:center; color:var(--muted); }
+.files-table th:nth-child(2), .files-table td:nth-child(2) { width:auto; }
 .files-table td:nth-child(2) { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 11px; word-break: break-all; }
-.files-table td:nth-child(3) { white-space: nowrap; width: 90px; }
-.files-table td:nth-child(4) { white-space: nowrap; width: 180px; color: var(--muted); }
+.files-table th:nth-child(3), .files-table td:nth-child(3) { width:150px; }
+.files-table td:nth-child(3) { color: var(--green-dark); font-weight:650; word-break: break-all; }
+.files-table th:nth-child(4), .files-table td:nth-child(4) { width:100px; }
+.files-table td:nth-child(4) { white-space: nowrap; }
+.files-table th:nth-child(5), .files-table td:nth-child(5) { width:190px; }
+.files-table td:nth-child(5) { white-space: nowrap; color: var(--muted); }
 .files-group-row td { padding:9px 12px; color:var(--green-dark); background:#edf4f0; font-weight:750; border-bottom:1px solid var(--line); }
 .files-group-row:not(:first-child) td { border-top:10px solid white; }
-#files-dialog { width:min(1100px, calc(100vw - 32px)); }
-#files-dialog .files-table th:nth-child(1), #files-dialog .files-table td:nth-child(1) { width:58px; }
-#files-dialog .files-table th:nth-child(2), #files-dialog .files-table td:nth-child(2) { width:auto; }
-#files-dialog .files-table th:nth-child(3), #files-dialog .files-table td:nth-child(3) { width:100px; }
-#files-dialog .files-table th:nth-child(4), #files-dialog .files-table td:nth-child(4) { width:190px; }
+/* 文件弹窗单独放宽，并让内容区单列铺满（默认 .dialog-body 是两列表单栅格） */
+#files-dialog { width:min(1440px, calc(100vw - 48px)); }
+#files-dialog .dialog-body { display:block; }
+#files-dialog .files-toolbar { margin-bottom:14px; flex-wrap:wrap; }
+#files-dialog .files-table-wrapper { max-height:min(560px, calc(100vh - 260px)); }
+.detail.detail-wide { grid-column: 1 / -1; }
 .empty { text-align: center; padding: 60px 20px; border: 1px dashed #b9c7bf; border-radius: 14px; background: rgba(255,255,255,.45); }.empty-icon { font-size: 36px; color: var(--green); }.empty p { color: var(--muted); }
 .form-card { background: white; border: 1px solid var(--line); border-radius: 14px; padding: 26px; box-shadow: var(--shadow); }.environment-card { max-width: 820px; }.pill { align-self: center; }.pill.enabled { background: var(--green-soft); }.environment-card form, .dialog-body { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .field { display: block; }.field.wide, .checkbox.wide, .form-actions.wide { grid-column: 1 / -1; }.field > span { display: block; margin-bottom: 7px; font-size: 12px; font-weight: 750; }.field small { display: block; color: var(--muted); margin-top: 6px; font-size: 11px; }
 .disk-info { color: var(--green-dark); font-weight: 650; }
+.db-times-hint { color: var(--green-dark); font-weight: 650; }
+.db-times-hint.invalid { color: var(--red); }
+/* ====== 每库备份计划表格 ====== */
+.db-schedule-wrap { margin-top:8px; }
+.db-schedule-table { width:100%; border-collapse:collapse; font-size:12px; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+.db-schedule-table th { background:#f0f5f2; text-align:left; padding:8px 12px; color:var(--muted); font-weight:650; font-size:11px; border-bottom:1px solid var(--line); }
+.db-schedule-table td { padding:7px 12px; border-bottom:1px solid #eef2ef; }
+.db-schedule-table tr:last-child td { border-bottom:0; }
+.db-schedule-table select { width:auto; min-width:130px; padding:6px 8px; font-size:12px; }
+.db-schedule-table input { width:100px; padding:6px 8px; font-size:12px; }
+.db-schedule-table input[disabled] { opacity:.45; background:transparent; border-color:transparent; }
+.db-sched-name { font-weight:650; font-family:ui-monospace,"Cascadia Code",Consolas,monospace; }
+.db-sched-desc { font-size:11px; color:var(--muted); white-space:nowrap; }
+.db-sched-desc .invalid { color:var(--red); font-weight:650; }
+.db-schedule-empty { color:var(--muted); font-size:12px; margin:12px 0 0; }
 .disk-info.disk-warn { color: var(--amber); }
 .disk-info.disk-danger { color: var(--red); }
 input, select { width: 100%; padding: 10px 11px; color: var(--ink); background: #fbfcfb; border: 1px solid #ccd8d1; border-radius: 8px; outline: none; } input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(23,107,77,.1); }.checkbox { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }.checkbox input { width: auto; }.form-actions { text-align: right; padding-top: 8px; }

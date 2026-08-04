@@ -104,12 +104,18 @@ function renderConfigs() {
       details.className = 'details';
       details.append(
         detail('连接地址', `${config.host}:${config.port}`),
-        detail('备份计划', config.backtime.includes(':') ? `${config.backtime} UTC` : `每 ${config.backtime} 分钟`),
+        detail('备份计划', formatSchedule(config.backtime)),
         detail('数据库', config.databases),
         detail('保留数量', `${config.maxFiles} 个文件`),
         detail('保存目录', config.saveDir),
         detail('认证', config.passwordConfigured ? `${config.user} / 已设密码` : `${config.user} / 无密码`),
       );
+      // 只在配置了每库单独计划时才多加一行，避免卡片信息冗余
+      if (config.dbTimes) {
+        const item = detail('每库单独计划', formatDbTimes(config.dbTimes));
+        item.classList.add('detail-wide');
+        details.append(item);
+      }
       card.append(details);
     }
 
@@ -136,25 +142,68 @@ function renderConfigs() {
     actions.append(edit, runNow, logBtn, filesBtn, remove);
     card.append(actions);
 
-    // 运行状态徽标 + 可折叠日志面板
-    const run = state.runs[config.fileName];
-    if (run) {
+    // 运行状态徽标 + 可折叠日志面板。
+    // 后端已按「配置+库」记录运行，同一配置可能有多条（每个库一条）。
+    const runs = state.runs[config.fileName];
+    if (runs && runs.length) {
       const badge = document.createElement('span');
-      badge.className = `run-badge ${run.status}`;
-      badge.textContent = runStatusLabel(run);
+      badge.className = `run-badge ${aggregateRunStatus(runs)}`;
+      badge.textContent = aggregateRunLabel(runs);
       card.querySelector('.card-head')?.append(badge);
 
       const logPanel = document.createElement('pre');
       logPanel.className = 'run-log';
       logPanel.dataset.fileName = config.fileName;
       logPanel.hidden = !state.expandedLogs.has(config.fileName);
-      const headLine = runSummary(run);
-      const body = (run.log || []).join('\n');
-      logPanel.textContent = headLine + (body ? '\n' + body : '');
+      logPanel.textContent = runs
+        .slice()
+        .sort((a, b) => (a.database || '').localeCompare(b.database || '', 'zh-CN'))
+        .map(run => {
+          const body = (run.log || []).join('\n');
+          return runSummary(run) + (body ? '\n' + body : '');
+        })
+        .join('\n\n');
       card.append(logPanel);
     }
     list.append(card);
   });
+}
+
+/** 把 backtime 渲染成中文说明：HH:mm → 每日定点；数字 → 间隔分钟。 */
+function formatSchedule(backtime) {
+  const value = String(backtime ?? '').trim();
+  if (!value) return '—';
+  return value.includes(':') ? `每天 ${value} UTC` : `每 ${value} 分钟`;
+}
+
+/** 把 dbtimes（db1:60,db2:02:00）渲染成「库=计划」的可读列表。 */
+function formatDbTimes(dbTimes) {
+  return String(dbTimes)
+    .split(',')
+    .map(entry => entry.trim())
+    .filter(Boolean)
+    .map(entry => {
+      const at = entry.indexOf(':');
+      if (at <= 0) return entry;
+      return `${entry.slice(0, at)} → ${formatSchedule(entry.slice(at + 1))}`;
+    })
+    .join('； ') || '—';
+}
+
+/** 多个库的运行状态合并成一个：运行中 > 失败 > 成功 > 空闲。 */
+function aggregateRunStatus(runs) {
+  if (runs.some(r => r.status === 'running')) return 'running';
+  if (runs.some(r => r.status === 'failed')) return 'failed';
+  if (runs.some(r => r.status === 'success')) return 'success';
+  return 'idle';
+}
+
+function aggregateRunLabel(runs) {
+  const status = aggregateRunStatus(runs);
+  const label = runStatusLabel({ status });
+  if (runs.length <= 1) return label;
+  const matched = runs.filter(r => r.status === status).length;
+  return `${label} ${matched}/${runs.length}`;
 }
 
 function runStatusLabel(run) {
@@ -170,7 +219,9 @@ function runSummary(run) {
   const label = runStatusLabel(run);
   const started = run.startedAtUtc ? new Date(run.startedAtUtc).toLocaleString('zh-CN', { hour12: false }) + ' UTC' : '—';
   const finished = run.finishedAtUtc ? new Date(run.finishedAtUtc).toLocaleString('zh-CN', { hour12: false }) + ' UTC' : '—';
-  let line = `[${label}] 触发:${run.trigger || '—'} 开始:${started} 结束:${finished}`;
+  // 库名可能为空（旧版任务级运行记录），此时不显示库前缀
+  const prefix = run.database ? `《${run.database}》 ` : '';
+  let line = `${prefix}[${label}] 触发:${run.trigger || '—'} 开始:${started} 结束:${finished}`;
   if (run.error) line += `\n错误: ${run.error}`;
   return line;
 }
@@ -187,48 +238,22 @@ function toggleLog(fileName, btn) {
   if (panel) panel.hidden = !state.expandedLogs.has(fileName);
 }
 
-async function toggleFiles(fileName, btn) {
-  if (state.expandedFiles.has(fileName)) {
-    state.expandedFiles.delete(fileName);
-    btn.classList.remove('active');
-    renderConfigs();
-    return;
-  }
-  state.expandedFiles.add(fileName);
-  btn.classList.add('active');
-  await loadBackupFiles(fileName);
-  renderConfigs();
-}
-
 async function openFilesDialog(fileName) {
   $('#files-dialog-title').textContent = fileName.replace(/\.conf$/i, '');
   $('#files-tbody').innerHTML = '';
   $('#files-empty-msg').hidden = true;
   $('#files-table-wrapper').hidden = true;
   $('#files-filter').value = 'all';
+  $('#files-group-by').value = 'database';
   $('#files-database-filter').innerHTML = '<option value="all">全部数据库</option>';
   $('#files-summary').textContent = '';
+  state.fileList = [];
   const dialog = $('#files-dialog');
   dialog.showModal();
   try {
     const files = await api(`/api/configs/${encodeURIComponent(fileName)}/files`);
     state.fileList = Array.isArray(files) ? files : [];
     populateDatabaseFilter();
-    const list = state.fileList;
-    if (!list.length) {
-      $('#files-empty-msg').hidden = false;
-      return;
-    }
-    $('#files-table-wrapper').hidden = false;
-    list.forEach(f => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td>${f.index}</td>
-        <td title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</td>
-        <td>${formatFileSize(f.sizeBytes)}</td>
-        <td>${f.createdAtUtc ? new Date(f.createdAtUtc).toLocaleString('zh-CN', { hour12: false }) + ' UTC' : '—'}</td>`;
-      $('#files-tbody').appendChild(tr);
-    });
     renderFileGroups();
   } catch (error) {
     toast(error.message, true);
@@ -242,9 +267,27 @@ function formatFileSize(bytes) {
   return (bytes / Math.pow(1024, i)).toFixed(i > 1 ? 2 : 0) + ' ' + units[i];
 }
 
+/** 备份时间列的统一格式化。 */
+function formatFileTime(file) {
+  return file.createdAtUtc
+    ? new Date(file.createdAtUtc).toLocaleString('zh-CN', { hour12: false }) + ' UTC'
+    : '—';
+}
+
+/**
+ * 库名优先取后端返回的 database 字段（后端按 conf 里的 dbs 精确匹配，
+ * 无法归属的会返回 "_other"）；老接口没有该字段时退回按文件名解析。
+ */
+function databaseOf(file) {
+  const value = file.database;
+  if (!value) return extractDatabaseName(file.name);
+  return value === '_other' ? '其他' : value;
+}
+
 function renderFileGroups() {
   const filter = $('#files-filter').value;
   const databaseFilter = $('#files-database-filter').value;
+  const groupBy = $('#files-group-by').value;
   const now = Date.now();
   const cutoff = filter === 'today'
     ? new Date().setHours(0, 0, 0, 0)
@@ -253,44 +296,68 @@ function renderFileGroups() {
     : 0;
   const filtered = (state.fileList || []).filter(file => {
     const matchesDate = !cutoff || (file.createdAtUtc && new Date(file.createdAtUtc).getTime() >= cutoff);
-    const matchesDatabase = databaseFilter === 'all' || extractDatabaseName(file.name) === databaseFilter;
+    const matchesDatabase = databaseFilter === 'all' || databaseOf(file) === databaseFilter;
     return matchesDate && matchesDatabase;
   });
-  $('#files-tbody').innerHTML = '';
+  const tbody = $('#files-tbody');
+  tbody.innerHTML = '';
   $('#files-empty-msg').hidden = filtered.length > 0;
   $('#files-table-wrapper').hidden = filtered.length === 0;
   $('#files-summary').textContent = `显示 ${filtered.length} / ${(state.fileList || []).length} 个文件`;
   if (!filtered.length) return;
 
+  const appendRow = (file, index) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${index}</td>
+      <td title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</td>
+      <td>${escapeHtml(databaseOf(file))}</td>
+      <td>${formatFileSize(file.sizeBytes)}</td>
+      <td>${formatFileTime(file)}</td>`;
+    tbody.appendChild(tr);
+  };
+
+  if (groupBy === 'none') {
+    filtered.forEach((file, i) => appendRow(file, i + 1));
+    return;
+  }
+
   const groups = new Map();
   filtered.forEach(file => {
-    const date = file.createdAtUtc ? new Date(file.createdAtUtc) : null;
-    const key = date ? `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}` : '未知日期';
+    let key;
+    if (groupBy === 'database') {
+      key = databaseOf(file);
+    } else {
+      const date = file.createdAtUtc ? new Date(file.createdAtUtc) : null;
+      key = date
+        ? `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`
+        : '未知日期';
+    }
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(file);
   });
 
-  let rowIndex = 1;
-  for (const [groupName, files] of groups) {
+  // 按库分组时按库名排序，按日期分组时新的在前
+  const sorted = [...groups.entries()].sort((a, b) => groupBy === 'database'
+    ? a[0].localeCompare(b[0], 'zh-CN')
+    : b[0].localeCompare(a[0]));
+
+  for (const [groupName, files] of sorted) {
+    const totalBytes = files.reduce((sum, f) => sum + (f.sizeBytes || 0), 0);
     const groupRow = document.createElement('tr');
     groupRow.className = 'files-group-row';
-    groupRow.innerHTML = `<td colspan="4">${escapeHtml(groupName)} · ${files.length} 个文件</td>`;
-    $('#files-tbody').appendChild(groupRow);
-    files.forEach(file => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td>${rowIndex++}</td>
-        <td title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</td>
-        <td>${formatFileSize(file.sizeBytes)}</td>
-        <td>${file.createdAtUtc ? new Date(file.createdAtUtc).toLocaleString('zh-CN', { hour12: false }) + ' UTC' : '—'}</td>`;
-      $('#files-tbody').appendChild(tr);
-    });
+    groupRow.innerHTML =
+      `<td colspan="5">${escapeHtml(groupName)} · ${files.length} 个文件 · ${formatFileSize(totalBytes)}</td>`;
+    tbody.appendChild(groupRow);
+    // 序号在每个分组内从 1 重新开始，方便对照单个库的备份代数
+    files.forEach((file, i) => appendRow(file, i + 1));
   }
 }
 
 function populateDatabaseFilter() {
   const select = $('#files-database-filter');
-  const databases = [...new Set((state.fileList || []).map(file => extractDatabaseName(file.name)))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  const databases = [...new Set((state.fileList || []).map(databaseOf))]
+    .sort((a, b) => a.localeCompare(b, 'zh-CN'));
   databases.forEach(database => {
     const option = document.createElement('option');
     option.value = database;
@@ -346,7 +413,12 @@ let runsPollTimer = null;
 async function loadRuns() {
   try {
     const runs = await api('/api/runs');
-    state.runs = Object.fromEntries(runs.map(r => [r.fileName, r]));
+    // 后端按「配置+库」返回，同一 fileName 会有多条，这里聚成数组
+    const grouped = {};
+    runs.forEach(run => {
+      (grouped[run.fileName] ||= []).push(run);
+    });
+    state.runs = grouped;
     renderConfigs();
     const anyRunning = runs.some(r => r.status === 'running');
     if (anyRunning && !runsPollTimer) {
@@ -542,6 +614,9 @@ function openDialog(config = null) {
   form.elements.backtime.value = config?.backtime || '60';
   form.elements.maxFiles.value = config?.maxFiles || 180;
   form.elements.saveDir.value = config?.saveDir || '/backup/';
+  // 每库计划：把 conf 里 dbtimes=app:30,hhx:02:00 解析成表格行
+  state.dbSchedules = parseDbTimesToRows(config?.dbTimes || '');
+  renderDbScheduleTable();
   $('#password-hint').textContent = config
     ? (config.passwordConfigured
         ? '已显示当前数据库密码；可直接修改，留空则保留原值。'
@@ -553,6 +628,171 @@ function openDialog(config = null) {
     const dir = form.elements.saveDir.value.trim();
     if (dir) fetchDiskInfo(dir);
   }, 50);
+}
+
+// ==================== 每库备份计划表格 ====================
+
+// 每行结构： { database, mode: 'inherit'|'interval'|'daily', value: '' }
+// inherit  → 沿用任务级（不写入 dbtimes）
+// interval → 每隔 N 分钟
+// daily    → 每天 HH:mm (UTC)
+state.dbSchedules = [];
+
+/**
+ * 把 conf 里的 dbtimes 字符串解析成表格行。
+ * 仅解析在「数据库」列表里的库名（保存时也会再校验）。
+ * 未在 dbtimes 里出现的库会在 renderDbScheduleTable 里按 dbs 补全成 inherit 行。
+ */
+function parseDbTimesToRows(dbTimes) {
+  const rows = [];
+  const raw = String(dbTimes || '').trim();
+  if (!raw) return rows;
+  raw.split(',').map(s => s.trim()).filter(Boolean).forEach(entry => {
+    const at = entry.lastIndexOf(':');
+    if (at <= 0) return;
+    const db = entry.slice(0, at).trim();
+    const time = entry.slice(at + 1).trim();
+    if (!db || !time) return;
+    // 纯数字 → 间隔分钟
+    if (/^\d+(\.\d+)?$/.test(time) && Number(time) > 0) {
+      rows.push({ database: db, mode: 'interval', value: time });
+    } else if (/^\d{1,2}:\d{1,2}$/.test(time)) {
+      rows.push({ database: db, mode: 'daily', value: time });
+    }
+  });
+  return rows;
+}
+
+/**
+ * 根据当前「数据库」输入框里的库名，重建表格：
+ * - 以 dbs 顺序为主序，逐行生成；
+ * - 已在 state.dbSchedules 里的库保留其设置；
+ * - 新出现的库默认 inherit；
+ * - 不在 dbs 里的行删掉。
+ */
+function renderDbScheduleTable() {
+  const tbody = $('#db-schedule-tbody');
+  const emptyMsg = $('#db-schedule-empty');
+  const table = $('#db-schedule-table');
+  if (!tbody) return;
+
+  const dbs = (form.elements.databases.value || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+
+  // 用 dbs 列表重排/补全 state.dbSchedules，保留已设置项
+  const byDb = new Map(state.dbSchedules.map(r => [r.database.toLowerCase(), r]));
+  state.dbSchedules = dbs.map(db => {
+    const existing = byDb.get(db.toLowerCase());
+    if (existing) return { ...existing, database: db };
+    return { database: db, mode: 'inherit', value: '' };
+  });
+
+  tbody.replaceChildren();
+  if (!state.dbSchedules.length) {
+    table.hidden = true;
+    emptyMsg.hidden = false;
+    return;
+  }
+  table.hidden = false;
+  emptyMsg.hidden = true;
+
+  state.dbSchedules.forEach((row, idx) => {
+    const tr = document.createElement('tr');
+    tr.dataset.row = String(idx);
+
+    // 库名（只读，随 dbs 输入驱动）
+    const tdDb = document.createElement('td');
+    tdDb.className = 'db-sched-name';
+    tdDb.textContent = row.database;
+    tr.append(tdDb);
+
+    // 计划类型下拉
+    const tdMode = document.createElement('td');
+    const sel = document.createElement('select');
+    sel.innerHTML = `
+      <option value="inherit">沿用任务级</option>
+      <option value="interval">每隔 N 分钟</option>
+      <option value="daily">每天定点 (UTC)</option>`;
+    sel.value = row.mode;
+    sel.addEventListener('change', () => {
+      row.mode = sel.value;
+      // 切回 inherit 时清空值，避免脏数据
+      if (sel.value === 'inherit') row.value = '';
+      else if (!row.value) row.value = sel.value === 'interval' ? '30' : '02:00';
+      renderDbScheduleTable();
+    });
+    tdMode.append(sel);
+    tr.append(tdMode);
+
+    // 值输入（随 mode 切换形态）
+    const tdVal = document.createElement('td');
+    tdVal.className = 'db-sched-value-col';
+    let input;
+    if (row.mode === 'interval') {
+      input = document.createElement('input');
+      input.type = 'number';
+      input.min = '1';
+      input.step = '1';
+      input.placeholder = '例如 30';
+    } else if (row.mode === 'daily') {
+      input = document.createElement('input');
+      input.type = 'time';
+      input.step = '60';
+    } else {
+      input = document.createElement('input');
+      input.disabled = true;
+      input.placeholder = '—';
+    }
+    input.value = row.value || '';
+    input.addEventListener('input', () => { row.value = input.value; });
+    tdVal.append(input);
+    tr.append(tdVal);
+
+    // 说明（实时预览，验证用）
+    const tdHint = document.createElement('td');
+    tdHint.className = 'db-sched-desc';
+    const span = document.createElement('span');
+    span.className = 'db-sched-desc-text';
+    tdHint.append(span);
+    tr.append(tdHint);
+
+    tbody.append(tr);
+    refreshScheduleDesc(idx, span);
+  });
+}
+
+/** 实时校验并渲染某行的说明文字（红字提示非法）。 */
+function refreshScheduleDesc(idx, span) {
+  const row = state.dbSchedules[idx];
+  if (!row) return;
+  const backtime = (form.elements.backtime.value || '').trim();
+  if (row.mode === 'inherit') {
+    span.className = 'db-sched-desc-text';
+    span.textContent = backtime.includes(':')
+      ? `沿用每天 ${backtime} UTC`
+      : `沿用每 ${backtime || '—'} 分钟`;
+    return;
+  }
+  if (row.mode === 'interval') {
+    const ok = /^\d+(\.\d+)?$/.test(row.value) && Number(row.value) > 0;
+    span.className = `db-sched-desc-text${ok ? '' : ' invalid'}`;
+    span.textContent = ok ? `每 ${row.value} 分钟` : '需为大于 0 的数字';
+    return;
+  }
+  if (row.mode === 'daily') {
+    const m = /^(\d{1,2}):(\d{1,2})$/.exec(row.value);
+    const ok = m && Number(m[1]) <= 23 && Number(m[2]) <= 59;
+    span.className = `db-sched-desc-text${ok ? '' : ' invalid'}`;
+    span.textContent = ok ? `每天 ${row.value} UTC` : '需为 HH:mm';
+  }
+}
+
+/** 把表格行序列化回 conf 的 dbtimes 字符串（仅非 inherit 行）。 */
+function serializeDbSchedules() {
+  return state.dbSchedules
+    .filter(r => r.mode !== 'inherit' && r.value)
+    .map(r => `${r.database}:${r.value.trim()}`)
+    .join(',');
 }
 
 async function saveConfig(event) {
@@ -568,6 +808,7 @@ async function saveConfig(event) {
     clearPassword: form.elements.clearPassword.checked,
     databases: data.databases,
     backtime: data.backtime,
+    dbTimes: serializeDbSchedules(),
     maxFiles: Number(data.maxFiles),
     saveDir: data.saveDir,
   };
@@ -722,6 +963,13 @@ $('#cancel-dialog').addEventListener('click', () => dialog.close());
 $('#close-files-dialog').addEventListener('click', () => $('#files-dialog').close());
 $('#files-filter').addEventListener('change', renderFileGroups);
 $('#files-database-filter').addEventListener('change', renderFileGroups);
+$('#files-group-by').addEventListener('change', renderFileGroups);
+// 「数据库」输入变化时，每库计划表格随之增删行
+$('#databases-input').addEventListener('input', renderDbScheduleTable);
+// 「备份计划」变化时，inherit 行的说明同步更新
+form.elements.backtime.addEventListener('input', () => {
+  document.querySelectorAll('.db-sched-desc-text').forEach((span, i) => refreshScheduleDesc(i, span));
+});
 $('#password-toggle').addEventListener('click', () => {
   const input = form.elements.password;
   input.type = input.type === 'password' ? 'text' : 'password';
