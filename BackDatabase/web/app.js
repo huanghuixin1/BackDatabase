@@ -538,6 +538,9 @@ async function loadSession() {
     const res = await api('/api/session');
     state.required = res.required;
     state.authenticated = res.authenticated;
+    const version = $('#app-version');
+    version.textContent = res.version ? `v${res.version}` : '';
+    version.hidden = !res.version;
   } catch (e) {
     toast('加载会话状态失败', true);
     return;

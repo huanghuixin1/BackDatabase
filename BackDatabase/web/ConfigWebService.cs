@@ -93,6 +93,7 @@ public static partial class ConfigWebService
         {
             required = authRequired,
             authenticated = !authRequired || auth.Authorize(CreateAuthRequest(context)),
+            version = AppInfo.Version,
         }));
 
         app.MapPost("/api/auth/login", async (HttpContext context) =>
@@ -290,6 +291,7 @@ public static partial class ConfigWebService
         app.MapGet("/api/status", () => Results.Ok(new
         {
             service = "BackDatabase",
+            version = AppInfo.Version,
             utcNow = DateTime.UtcNow,
             restartRequiredAfterChanges = true,
         }));
