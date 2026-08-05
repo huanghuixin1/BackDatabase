@@ -137,7 +137,9 @@ dotnet publish -c Release -o publish
 Linux 后台：
 
 ```bash
-nohup ./BackDatabase > /var/log/backdatabase.log 2>&1 &
+chmod +x backdatabase.sh
+./backdatabase.sh start
+# 可用：./backdatabase.sh stop | restart | status
 ```
 
 修改配置后需**重启程序**。

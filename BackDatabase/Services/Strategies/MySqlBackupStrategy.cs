@@ -13,9 +13,14 @@ public sealed class MySqlBackupStrategy : IDatabaseBackupStrategy
     public DumpCommand BuildCommand(BackupConfig config, string database, string sqlFilePath)
     {
         // mysqldump 默认把 dump 内容写到 stdout，由调用方重定向到文件
+        // MySQL 8 no longer accepts --skip-ssl; MariaDB clients do not support --ssl-mode.
+        var sslOption = string.Equals(config.DbType, "mariadb", StringComparison.OrdinalIgnoreCase)
+            ? "--skip-ssl"
+            : "--ssl-mode=DISABLED";
+
         IReadOnlyList<string> args =
         [
-            "--skip-ssl",
+            sslOption,
             "--single-transaction", // InnoDB 一致性快照，尽量不锁表
             $"--host={config.Host}",
             $"--port={config.Port}",
@@ -27,7 +32,7 @@ public sealed class MySqlBackupStrategy : IDatabaseBackupStrategy
 
         // 日志脱敏：不打印真实密码
         var display =
-            $"mysqldump --skip-ssl --single-transaction --host {config.Host} --port {config.Port} " +
+            $"mysqldump {sslOption} --single-transaction --host {config.Host} --port {config.Port} " +
             $"-u{config.User} -p*** --databases {database} > {sqlFilePath}";
 
         return new DumpCommand
