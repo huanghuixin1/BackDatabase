@@ -88,6 +88,7 @@ function renderConfigs() {
   state.configs.forEach(config => {
     const card = document.createElement('article');
     card.className = `config-card${config.error ? ' error' : ''}`;
+    card.dataset.fileName = config.fileName;
     const head = document.createElement('div');
     head.className = 'card-head';
     const titleWrap = document.createElement('div');
@@ -142,7 +143,9 @@ function renderConfigs() {
     runNow.disabled = Boolean(config.error);
     runNow.addEventListener('click', () => triggerBackup(config.fileName, runNow));
     const logBtn = document.createElement('button');
-    logBtn.className = 'ghost'; logBtn.textContent = '日志';
+    logBtn.className = `ghost${state.expandedLogs.has(config.fileName) ? ' active' : ''}`;
+    logBtn.textContent = '日志';
+    logBtn.dataset.logToggle = config.fileName;
     logBtn.disabled = Boolean(config.error);
     logBtn.addEventListener('click', () => toggleLog(config.fileName, logBtn));
     const filesBtn = document.createElement('button');
@@ -155,30 +158,78 @@ function renderConfigs() {
     actions.append(edit, runNow, logBtn, filesBtn, remove);
     card.append(actions);
 
-    // 运行状态徽标 + 可折叠日志面板。
-    // 后端已按「配置+库」记录运行，同一配置可能有多条（每个库一条）。
-    const runs = state.runs[config.fileName];
-    if (runs && runs.length) {
-      const badge = document.createElement('span');
-      badge.className = `run-badge ${aggregateRunStatus(runs)}`;
-      badge.textContent = aggregateRunLabel(runs);
-      card.querySelector('.card-head')?.append(badge);
+    // 运行状态徽标 + 可折叠日志面板，内容由 renderRuns 增量填充（见下）。
+    // 这里只建空壳，避免轮询时把卡片整个重建、把日志滚动位置冲掉。
+    const logPanel = document.createElement('pre');
+    logPanel.className = 'run-log';
+    logPanel.dataset.fileName = config.fileName;
+    logPanel.hidden = true;
+    card.append(logPanel);
 
-      const logPanel = document.createElement('pre');
-      logPanel.className = 'run-log';
-      logPanel.dataset.fileName = config.fileName;
-      logPanel.hidden = !state.expandedLogs.has(config.fileName);
-      logPanel.textContent = runs
-        .slice()
-        .sort((a, b) => (a.database || '').localeCompare(b.database || '', 'zh-CN'))
-        .map(run => {
-          const body = (run.log || []).join('\n');
-          return runSummary(run) + (body ? '\n' + body : '');
-        })
-        .join('\n\n');
-      card.append(logPanel);
-    }
     list.append(card);
+  });
+
+  renderRuns();
+}
+
+/**
+ * 只更新运行徽标和日志文本，不碰卡片本身。
+ *
+ * 日志是 2 秒一轮询的，如果跟着 renderConfigs 整个重建卡片，每轮都会生成一个全新的
+ * <pre>（scrollTop 归零），滚动条就会一直往上跳。所以这里复用已有节点，并且：
+ *   - 文本没变就完全不写 DOM；
+ *   - 写之前记住滚动位置，写完还原；
+ *   - 原本就贴在底部的话，保持贴底（跟着新日志走）。
+ */
+function renderRuns() {
+  document.querySelectorAll('#config-list .config-card').forEach(card => {
+    const fileName = card.dataset.fileName;
+    const runs = state.runs[fileName];
+    const panel = card.querySelector('.run-log');
+    const head = card.querySelector('.card-head');
+    let badge = head?.querySelector('.run-badge');
+
+    if (!runs || !runs.length) {
+      badge?.remove();
+      if (panel) { panel.hidden = true; panel.textContent = ''; }
+      return;
+    }
+
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'run-badge';
+      head?.append(badge);
+    }
+    const status = aggregateRunStatus(runs);
+    // className 每次都赋值会重启 running 的 CSS 动画，所以只在真的变了时才写
+    if (badge.dataset.status !== status) {
+      badge.dataset.status = status;
+      badge.className = `run-badge ${status}`;
+    }
+    const label = aggregateRunLabel(runs);
+    if (badge.textContent !== label) badge.textContent = label;
+
+    if (!panel) return;
+    const expanded = state.expandedLogs.has(fileName);
+    panel.hidden = !expanded;
+    // 「立即备份」会自动展开日志，按钮高亮状态要跟着 expandedLogs 走
+    card.querySelector(`[data-log-toggle]`)?.classList.toggle('active', expanded);
+
+    const text = runs
+      .slice()
+      .sort((a, b) => (a.database || '').localeCompare(b.database || '', 'zh-CN'))
+      .map(run => {
+        const body = (run.log || []).join('\n');
+        return runSummary(run) + (body ? '\n' + body : '');
+      })
+      .join('\n\n');
+    if (panel.textContent === text) return;
+
+    // 距底部 24px 内视为「正在看最新的」，更新后继续贴底；否则原地不动
+    const stickToBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 24;
+    const previousTop = panel.scrollTop;
+    panel.textContent = text;
+    panel.scrollTop = stickToBottom ? panel.scrollHeight : previousTop;
   });
 }
 
@@ -260,7 +311,11 @@ function toggleLog(fileName, btn) {
     btn.classList.add('active');
   }
   const panel = document.querySelector(`.run-log[data-file-name="${CSS.escape(fileName)}"]`);
-  if (panel) panel.hidden = !state.expandedLogs.has(fileName);
+  if (!panel) return;
+  const expanded = state.expandedLogs.has(fileName);
+  panel.hidden = !expanded;
+  // 展开时直接落到最新一行（隐藏状态下 scrollHeight 为 0，只能展开后再滚）
+  if (expanded) panel.scrollTop = panel.scrollHeight;
 }
 
 async function openFilesDialog(fileName) {
@@ -444,7 +499,8 @@ async function loadRuns() {
       (grouped[run.fileName] ||= []).push(run);
     });
     state.runs = grouped;
-    renderConfigs();
+    // 只刷运行状态，不重建卡片：否则日志面板每 2 秒被换成新节点，滚动条会跳回顶部
+    renderRuns();
     const anyRunning = runs.some(r => r.status === 'running');
     if (anyRunning && !runsPollTimer) {
       runsPollTimer = setInterval(loadRuns, 2000);
