@@ -83,3 +83,4 @@ case "${1:-}" in
     echo "???$0 {start|stop|restart|status}" >&2
     exit 2
     ;;
+esac
