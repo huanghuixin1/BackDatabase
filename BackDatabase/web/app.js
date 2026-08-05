@@ -648,10 +648,10 @@ function parseDbTimesToRows(dbTimes) {
   const raw = String(dbTimes || '').trim();
   if (!raw) return rows;
   raw.split(',').map(s => s.trim()).filter(Boolean).forEach(entry => {
-    const at = entry.lastIndexOf(':');
-    if (at <= 0) return;
-    const db = entry.slice(0, at).trim();
-    const time = entry.slice(at + 1).trim();
+    const match = /^(.*?):((?:\d+(?:\.\d+)?)|(?:\d{1,2}:\d{1,2}))$/.exec(entry);
+    if (!match) return;
+    const db = match[1].trim();
+    const time = match[2].trim();
     if (!db || !time) return;
     // 纯数字 → 间隔分钟
     if (/^\d+(\.\d+)?$/.test(time) && Number(time) > 0) {
