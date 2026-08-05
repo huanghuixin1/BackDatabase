@@ -129,6 +129,22 @@ app.MapPut("/api/nodes/{id:guid}", (Guid id, BackNodeWriteRequest request) =>
 app.MapDelete("/api/nodes/{id:guid}", (Guid id) =>
     nodeStore.Delete(id) ? Results.Ok(new { message = "节点已删除。" }) : Results.NotFound(new { message = "节点不存在。" }));
 
+// 控制台 iframe 直连 back 节点，跨域填不了它的登录框。这里由 server 拼一个带口令片段的地址：
+// URL 片段不会随请求发给 back（也就不会进它的访问日志），back 页面读到后立即清除片段并自动登录。
+app.MapPost("/api/nodes/{id:guid}/console-url", (Guid id) =>
+{
+    var node = nodeStore.Find(id);
+    if (node is null)
+        return Results.NotFound(new { message = "节点不存在。" });
+    if (!node.Enabled)
+        return Results.Problem("节点已禁用。", statusCode: 409);
+
+    var src = string.IsNullOrEmpty(node.WebPassword)
+        ? $"{node.BaseUrl}/"
+        : $"{node.BaseUrl}/#k={Uri.EscapeDataString(node.WebPassword)}";
+    return Results.Ok(new { src });
+});
+
 app.MapGet("/api/nodes/{id:guid}/status", async (Guid id, BackNodeClient client, CancellationToken cancellationToken) =>
     await ProxyAsync(nodeStore, client, id, client.GetStatusAsync, cancellationToken));
 

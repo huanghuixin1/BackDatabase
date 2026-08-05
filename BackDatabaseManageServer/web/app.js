@@ -1,6 +1,6 @@
 const TOKEN_KEY = "backmanage_token";
 const PASSWORD_KEY = "backmanage_password";
-const state = { token: sessionStorage.getItem(TOKEN_KEY), nodes: [], selected: null, configs: [], editingTask: null, onlineTimer: null, refreshingAll: false };
+const state = { token: sessionStorage.getItem(TOKEN_KEY), nodes: [], selected: null, configs: [], editingTask: null, onlineTimer: null, refreshingAll: false, consoleTabs: [], activeConsoleTabId: null, consoleMinimized: false };
 
 const $ = (id) => document.getElementById(id);
 
@@ -71,6 +71,7 @@ function renderNodes() {
       <p class="node-url">${escapeHtml(node.baseUrl)}</p>
       <p class="node-meta">${onlineDescription(node)}</p>
       <div class="node-actions">
+        <button class="primary" data-action="console" data-id="${node.id}">打开控制台</button>
         <button class="secondary" data-action="details" data-id="${node.id}">查看</button>
         <button class="secondary" data-action="refresh" data-id="${node.id}" ${state.refreshingAll ? "disabled" : ""}>${state.refreshingAll ? "刷新中…" : "刷新状态"}</button>
         <button class="warning" data-action="restart" data-id="${node.id}">重启</button>
@@ -79,6 +80,91 @@ function renderNodes() {
     </article>`).join("");
 }
 
+async function openNodeConsole(id) {
+  const node = state.nodes.find((item) => item.id === id);
+  if (!node) return;
+
+  if (!state.consoleTabs.some((tab) => tab.id === id)) {
+    // 控制台 iframe 直连 back 节点，跨域读不到它的登录框；
+    // 由 server 侧拼一个带 #webPassword 片段的地址（口令不发给服务器、不进日志），
+    // back 页面取用后立即清除，实现「打开控制台即已填好密码」。
+    let src;
+    try {
+      src = (await api(`/api/nodes/${id}/console-url`, { method: "POST" })).src;
+    } catch (error) {
+      showToast(`获取控制台地址失败：${error.message}`, true);
+      return;
+    }
+    state.consoleTabs.push({ id, name: node.name, baseUrl: node.baseUrl, src });
+  }
+
+  state.activeConsoleTabId = id;
+  state.consoleMinimized = false;
+  renderNodeConsole();
+}
+
+function closeNodeConsole(id) {
+  const index = state.consoleTabs.findIndex((tab) => tab.id === id);
+  if (index < 0) return;
+
+  state.consoleTabs.splice(index, 1);
+  if (state.activeConsoleTabId === id)
+    state.activeConsoleTabId = state.consoleTabs[index]?.id || state.consoleTabs[index - 1]?.id || null;
+  renderNodeConsole();
+}
+
+function renderNodeConsole() {
+  // 控制台是覆盖层，收起时只隐藏容器、保留 iframe，回来时不用重新加载和登录
+  const hasTabs = state.consoleTabs.length > 0;
+  if (!hasTabs) state.consoleMinimized = false;
+  $("node-console").classList.toggle("hidden", !hasTabs || state.consoleMinimized);
+
+  const restore = $("console-restore");
+  restore.classList.toggle("hidden", !hasTabs || !state.consoleMinimized);
+  const active = state.consoleTabs.find((tab) => tab.id === state.activeConsoleTabId) || state.consoleTabs[0];
+  if (hasTabs && state.consoleMinimized)
+    restore.textContent = `▲ 控制台（${state.consoleTabs.length}）· ${active.name}`;
+
+  $("node-tabs").replaceChildren(...state.consoleTabs.map((tab) => {
+    const button = document.createElement("div");
+    button.className = `node-tab${tab.id === state.activeConsoleTabId ? " active" : ""}`;
+    button.tabIndex = 0;
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", String(tab.id === state.activeConsoleTabId));
+    button.append(Object.assign(document.createElement("span"), { className: "node-tab-label", textContent: tab.name }));
+    button.addEventListener("click", () => { state.activeConsoleTabId = tab.id; renderNodeConsole(); });
+    button.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); state.activeConsoleTabId = tab.id; renderNodeConsole(); }
+    });
+
+    const close = document.createElement("button");
+    close.className = "node-tab-close";
+    close.type = "button";
+    close.textContent = "×";
+    close.setAttribute("aria-label", `关闭 ${tab.name}`);
+    close.addEventListener("click", (event) => { event.stopPropagation(); closeNodeConsole(tab.id); });
+    button.append(close);
+    return button;
+  }));
+
+  const frameContainer = $("node-frame-container");
+  const tabIds = new Set(state.consoleTabs.map((tab) => tab.id));
+  frameContainer.querySelectorAll("iframe[data-node-id]").forEach((frame) => {
+    if (!tabIds.has(frame.dataset.nodeId)) frame.remove();
+  });
+  state.consoleTabs.forEach((tab) => {
+    let frame = frameContainer.querySelector(`iframe[data-node-id="${tab.id}"]`);
+    if (!frame) {
+      frame = document.createElement("iframe");
+      frame.className = "node-frame";
+      frame.dataset.nodeId = tab.id;
+      frame.src = tab.src;
+      frame.title = `${tab.name} 控制台`;
+      frameContainer.append(frame);
+    }
+    frame.classList.toggle("active", tab.id === state.activeConsoleTabId);
+  });
+}
 function onlineClass(node) {
   if (!node.enabled || node.online == null) return "unknown";
   return node.online ? "on" : "off";
@@ -369,7 +455,9 @@ $("nav-add-node").addEventListener("click", openNodeDialog);
 $("node-form").addEventListener("submit", addNode);
 $("reset-node").addEventListener("click", () => $("node-form").reset());
 $("node-close").addEventListener("click", closeNodeDialog);
-$("node-list").addEventListener("click", (event) => { const button = event.target.closest("button[data-action]"); if (!button) return; const id = button.dataset.id; const action = button.dataset.action; if (action === "details") openDetails(id); if (action === "refresh") refreshNode(id, button); if (action === "restart") restartNode(id); if (action === "delete") deleteNode(id); });
+$("node-list").addEventListener("click", (event) => { const button = event.target.closest("button[data-action]"); if (!button) return; const id = button.dataset.id; const action = button.dataset.action; if (action === "console") openNodeConsole(id); if (action === "details") openDetails(id); if (action === "refresh") refreshNode(id, button); if (action === "restart") restartNode(id); if (action === "delete") deleteNode(id); });
+$("console-minimize").addEventListener("click", () => { state.consoleMinimized = true; renderNodeConsole(); });
+$("console-restore").addEventListener("click", () => { state.consoleMinimized = false; renderNodeConsole(); });
 $("detail-refresh").addEventListener("click", refreshDetails);
 $("detail-restart").addEventListener("click", () => state.selected && restartNode(state.selected.id));
 $("add-task").addEventListener("click", () => openTaskDialog());

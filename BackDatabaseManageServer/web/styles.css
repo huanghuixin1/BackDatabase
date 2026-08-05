@@ -54,6 +54,25 @@ nav { display:grid; gap:5px; margin-top:48px; }
 .node-url { overflow:hidden; margin:14px 0 6px; color:var(--green); text-overflow:ellipsis; white-space:nowrap; }
 .node-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:18px; }
 .node-actions .secondary,.node-actions .warning { padding:8px 10px; font-size:13px; }
+/* 控制台占满侧边栏右侧的整块区域：嵌进 .main 的 1180px 栏里 back 页面会被挤得太窄。
+   它是覆盖层，所以必须能收起 —— 收起时 iframe 留在 DOM 里（不重新加载、不用重新登录），只是整块隐藏。 */
+.node-console { position:fixed; left:240px; right:0; top:0; bottom:0; z-index:10; display:flex; flex-direction:column; background:var(--card); }
+.node-console-bar { display:flex; align-items:stretch; flex:0 0 auto; gap:8px; padding:10px 10px 0; background:#f4f8f5; border-bottom:1px solid var(--line); }
+.node-tabs { display:flex; align-items:center; flex:1 1 auto; min-width:0; gap:4px; overflow-x:auto; }
+.console-minimize { flex:0 0 auto; align-self:center; margin-bottom:2px; padding:6px 12px; border:1px solid var(--line); border-radius:8px; color:var(--muted); background:var(--card); font-size:12px; cursor:pointer; white-space:nowrap; }
+.console-minimize:hover { color:var(--green); border-color:var(--green); }
+/* 收起后停在右下角的小条，点一下回到控制台 */
+.console-restore { position:fixed; right:22px; bottom:22px; z-index:11; padding:11px 18px; border:0; border-radius:24px; color:#fff; background:var(--green-dark); box-shadow:var(--shadow); font-size:13px; cursor:pointer; }
+.console-restore:hover { background:var(--green); }
+/* 标签像浏览器一样：初始 168px，开得多了自动收窄到 76px，再多才横向滚动 */
+.node-tab { display:flex; align-items:center; gap:5px; flex:0 1 168px; min-width:76px; padding:8px 6px 7px 10px; color:var(--muted); background:transparent; border:0; border-bottom:2px solid transparent; cursor:pointer; font-size:13px; white-space:nowrap; }
+.node-tab-label { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.node-tab.active { color:var(--green); background:var(--card); border-bottom-color:var(--green); }
+.node-tab-close { display:grid; place-items:center; flex:0 0 auto; width:17px; height:17px; padding:0; border:0; border-radius:50%; color:inherit; background:transparent; font-size:15px; line-height:1; cursor:pointer; }
+.node-tab-close:hover { color:var(--red); background:#fdecec; }
+.node-frame-container { flex:1 1 0; position:relative; overflow:hidden; }
+.node-frame { display:none; width:100%; height:100%; border:0; background:white; position:absolute; top:0; left:0; }
+.node-frame.active { display:block; }
 .empty { padding:48px; border:1px dashed #bfd3c7; border-radius:14px; text-align:center; color:var(--muted); }
 .section { scroll-margin-top:22px; }
 .check { display:flex; align-items:center; gap:9px; font-weight:400; }
@@ -78,8 +97,8 @@ dialog::backdrop { background:rgba(20,39,31,.4); }
 .task-form-grid { display:grid; grid-template-columns:1fr 1fr; gap:0 16px; }
 .task-form-grid .wide { grid-column:1 / -1; }
 .code-block { max-height:240px; overflow:auto; margin:10px 0 25px; padding:14px; border-radius:9px; color:#d6e9df; background:#19352c; font:12px/1.5 Consolas,monospace; white-space:pre-wrap; }
-.toast { position:fixed; right:22px; bottom:22px; z-index:3; max-width:360px; padding:12px 16px; border-radius:9px; color:#fff; background:var(--green-dark); opacity:0; transform:translateY(8px); transition:.2s; pointer-events:none; }
+.toast { position:fixed; right:22px; bottom:22px; z-index:20; max-width:360px; padding:12px 16px; border-radius:9px; color:#fff; background:var(--green-dark); opacity:0; transform:translateY(8px); transition:.2s; pointer-events:none; }
 .toast.show { opacity:1; transform:translateY(0); }
 .toast.error { background:var(--red); }
-@media (max-width:800px) { .sidebar { width:190px; } .main { padding:28px 22px 50px; } .metrics { grid-template-columns:1fr; } }
-@media (max-width:560px) { .app { display:block; } .sidebar { width:auto; padding:17px; position:static; height:auto; overflow:visible; } nav { display:flex; margin-top:20px; } .sidebar-action { margin-top:12px; } .main { padding:25px 16px 45px; } .login-card { padding:29px 23px; } .task-form-grid { grid-template-columns:1fr; } .task-form-grid .wide { grid-column:auto; } .task-card { grid-template-columns:1fr; } }
+@media (max-width:800px) { .sidebar { width:190px; } .main { padding:28px 22px 50px; } .metrics { grid-template-columns:1fr; } .node-console { left:190px; } }
+@media (max-width:560px) { .app { display:block; } .sidebar { width:auto; padding:17px; position:static; height:auto; overflow:visible; } nav { display:flex; margin-top:20px; } .sidebar-action { margin-top:12px; } .main { padding:25px 16px 45px; } .login-card { padding:29px 23px; } .task-form-grid { grid-template-columns:1fr; } .task-form-grid .wide { grid-column:auto; } .task-card { grid-template-columns:1fr; } .node-console { left:0; } }

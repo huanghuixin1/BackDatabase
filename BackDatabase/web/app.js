@@ -541,6 +541,16 @@ function showView(viewName) {
   }
 }
 
+// 从 manage server 的控制台标签页打开时，地址片段里带着本节点的访问口令（#k=...）。
+// 片段不会随请求发给服务器、也不进访问日志；这里读一次就立刻从地址栏抹掉，只用于预填和自动登录。
+const consolePassword = (() => {
+  const match = /[#&]k=([^&]*)/.exec(location.hash || '');
+  if (!match) return '';
+  history.replaceState(null, '', location.pathname + location.search);
+  try { return decodeURIComponent(match[1]); } catch { return match[1]; }
+})();
+let consoleAutoLoginTried = false;
+
 async function loadSession() {
   try {
     const res = await api('/api/session');
@@ -563,13 +573,20 @@ async function loadSession() {
     showView('login');
     loginForm.reset();
     loginMessage.textContent = '';
-    // 如果之前勾过「记住访问口令」，预填并默认勾选
-    const saved = localStorage.getItem(REMEMBER_KEY) || '';
+    // 控制台带过来的口令优先，其次是之前勾过「记住访问口令」存下的
+    const saved = consolePassword || localStorage.getItem(REMEMBER_KEY) || '';
     if (saved) {
       loginForm.elements.webPassword.value = saved;
-      loginForm.elements.remember.checked = true;
+      loginForm.elements.remember.checked = !consolePassword;
     } else {
       loginForm.elements.remember.checked = false;
+    }
+
+    // 口令来自控制台时直接登录，省掉一次点击（只试一次，失败就停在登录页由用户处理）
+    if (consolePassword && !consoleAutoLoginTried) {
+      consoleAutoLoginTried = true;
+      await login(new Event('submit'));
+      return;
     }
     loginForm.elements.webPassword.focus();
     return;
