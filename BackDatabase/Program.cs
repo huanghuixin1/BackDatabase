@@ -9,6 +9,8 @@ using Microsoft.AspNetCore.Hosting; // UseUrls 扩展方法所在命名空间
 // 注册代码页提供程序，便于 Windows 下将 mysqldump 的 GBK 错误信息尝试解码为可读中文
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
+var applicationArgs = AppEntry.WaitForRestartParentIfRequested(args);
+
 // 版本号
 var version = "1.9";
 Console.WriteLine($"{DateTime.UtcNow:yyyy-MM-dd_HH:mm:ss} 当前版本: {version}, 服务开启成功...");
@@ -47,7 +49,7 @@ scheduler.StartAll(configs);
 
 // ==== Web 管理界面 ====
 const string webUrls = "http://0.0.0.0:5080";
-var builder = WebApplication.CreateBuilder(args);
+var builder = WebApplication.CreateBuilder(applicationArgs);
 builder.WebHost.UseUrls(webUrls);
 var app = builder.Build();
 
