@@ -15,6 +15,16 @@ apt install mysql-client
 
 Windows：将 `mysqldump.exe` / `pg_dump.exe` 所在目录加入环境变量。
 
+### 安装.net 10
+```bash
+wget https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb -O packages-microsoft-prod.deb
+dpkg -i packages-microsoft-prod.deb
+rm packages-microsoft-prod.deb
+
+apt-get update
+apt-get install -y dotnet-sdk-10.0
+```
+
 ## 目录结构
 
 ```
