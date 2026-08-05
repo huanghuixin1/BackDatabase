@@ -69,6 +69,14 @@ function detail(label, value) {
   return item;
 }
 
+function sensitiveValue(value) {
+  return state.showSensitiveData ? (value || '—') : '*****';
+}
+
+function updateSensitiveDataToggle() {
+  $('#sensitive-data-toggle').textContent = state.showSensitiveData ? '隐藏敏感信息' : '显示敏感信息';
+}
+
 function renderConfigs() {
   const list = $('#config-list');
   list.replaceChildren();
@@ -103,12 +111,12 @@ function renderConfigs() {
       const details = document.createElement('div');
       details.className = 'details';
       details.append(
-        detail('连接地址', `${config.host}:${config.port}`),
+        detail('连接地址', sensitiveValue(`${config.host}:${config.port}`)),
         detail('备份计划', formatSchedule(config.backtime)),
-        detail('数据库', config.databases),
+        detail('数据库', sensitiveValue(config.databases)),
         detail('保留数量', `${config.maxFiles} 个文件`),
-        detail('保存目录', config.saveDir),
-        detail('认证', config.passwordConfigured ? `${config.user} / 已设密码` : `${config.user} / 无密码`),
+        detail('保存目录', sensitiveValue(config.saveDir)),
+        detail('认证', config.passwordConfigured ? `${sensitiveValue(config.user)} / 已设密码` : `${sensitiveValue(config.user)} / 无密码`),
       );
       // 只在配置了每库单独计划时才多加一行，避免卡片信息冗余
       if (config.dbTimes) {
@@ -190,7 +198,7 @@ function formatDbTimes(dbTimes) {
     .map(entry => {
       const at = entry.indexOf(':');
       if (at <= 0) return entry;
-      return `${entry.slice(0, at)} → ${formatSchedule(entry.slice(at + 1))}`;
+      return `${sensitiveValue(entry.slice(0, at))} → ${formatSchedule(entry.slice(at + 1))}`;
     })
     .join('； ') || '—';
 }
@@ -202,7 +210,7 @@ function formatDbMaxFiles(dbMaxFiles) {
     .filter(Boolean)
     .map(entry => {
       const at = entry.indexOf(':');
-      return at > 0 ? `${entry.slice(0, at)} → ${entry.slice(at + 1)} 个文件` : entry;
+      return at > 0 ? `${sensitiveValue(entry.slice(0, at))} → ${entry.slice(at + 1)} 个文件` : entry;
     })
     .join('；') || '—';
 }
@@ -931,8 +939,8 @@ function renderTrash() {
         ? new Date(item.deletedAtUtc).toLocaleString('zh-CN', { hour12: false }) + ' UTC'
         : '—';
       details.append(
-        detail('连接地址', `${item.host}:${item.port}`),
-        detail('数据库', item.databases),
+        detail('连接地址', sensitiveValue(`${item.host}:${item.port}`)),
+        detail('数据库', sensitiveValue(item.databases)),
         detail('删除时间', deleted),
       );
       card.append(details);
@@ -1015,6 +1023,12 @@ $('#empty-add').addEventListener('click', () => openDialog());
 $('#refresh-button').addEventListener('click', loadConfigs);
 $('#refresh-trash-button').addEventListener('click', loadTrash);
 $('#backup-all-button').addEventListener('click', backupAll);
+$('#sensitive-data-toggle').addEventListener('click', () => {
+  state.showSensitiveData = !state.showSensitiveData;
+  updateSensitiveDataToggle();
+  renderConfigs();
+  renderTrash();
+});
 $('#close-dialog').addEventListener('click', () => dialog.close());
 $('#cancel-dialog').addEventListener('click', () => dialog.close());
 $('#close-files-dialog').addEventListener('click', () => $('#files-dialog').close());
@@ -1086,4 +1100,5 @@ form.elements.saveDir.addEventListener('input', () => { state.autoSaveDir = fals
 
 setInterval(() => $('#utc-clock').textContent = new Date().toISOString().slice(0, 19).replace('T', ' ') + ' UTC', 1000);
 
+updateSensitiveDataToggle();
 loadSession();
