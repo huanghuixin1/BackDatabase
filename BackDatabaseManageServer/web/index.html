@@ -82,6 +82,7 @@
         <label class="wide">数据库列表<input id="task-databases" required placeholder="多个数据库用英文逗号分隔"></label>
         <label>备份计划<input id="task-backtime" required value="60" placeholder="分钟数或 UTC HH:mm"></label>
         <label>最大保留数量<input id="task-max-files" type="number" required min="1" value="180"></label>
+        <label class="wide">每库最大保留数量（可选）<input id="task-db-max-files" placeholder="例如 app:30,analytics:90；未填写的库沿用上面的数量"></label>
         <label class="wide">保存目录<input id="task-save-dir" required value="/backup/"></label>
       </div>
       <p id="task-password-hint" class="storage-hint"></p>

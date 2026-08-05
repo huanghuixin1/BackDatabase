@@ -8,7 +8,7 @@ namespace BackDatabase.Services;
 /// <summary>
 /// 执行一次备份流程（对应 Go 版 invokeBack）：
 /// 1. 确保保存目录存在；
-/// 2. 先删除 0 字节空文件，再按 maxfiles 删除最旧文件；
+/// 2. 先删除 0 字节空文件，再按每个数据库的 maxfiles 删除最旧文件；
 /// 3. 通过策略解析 dbType，调用对应 dump 工具生成 .sql；
 /// 4. 失败则删除残缺文件并自动重试一次。
 /// </summary>
@@ -129,8 +129,8 @@ public sealed class BackupRunner
         var saveDir = config.ResolveSaveDir(_baseDir);
         Directory.CreateDirectory(saveDir);
 
-        // 先删空文件、再按数量裁剪旧备份，再写新文件，避免磁盘被脏/旧文件占满
-        TrimOldFiles(saveDir, config.MaxFiles, handle);
+        // 先删空文件；每个数据库在写入前再单独裁剪旧备份。
+        DeleteEmptyFiles(saveDir, handle);
 
         var dbs = onlyDatabases ?? config.Databases;
         if (dbs.Count == 0)
@@ -143,6 +143,7 @@ public sealed class BackupRunner
         foreach (var db in dbs)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            TrimOldFiles(saveDir, db, config.EffectiveMaxFiles(db), handle);
             BackupOneDatabase(config, saveDir, db, handle, cancellationToken);
         }
     }
@@ -415,16 +416,11 @@ public sealed class BackupRunner
     }
 
     /// <summary>
-    /// 清理保存目录：
-    /// 1. 先删除 0 字节空文件（失败/中断留下的残缺备份）；
-    /// 2. 再当文件数 &gt; maxFiles 时，按 LastWriteTimeUtc 从旧到新删除，直到不超过上限。
-    /// 对应 Go 的 getMinModifyTimeFile + 循环 Remove，并额外处理空文件。
+    /// 清理单个数据库的旧备份，只统计符合本程序文件名格式的该库 SQL 文件。
+    /// 写新文件前按 LastWriteTimeUtc 删除超出上限的最旧文件。
     /// </summary>
-    private static void TrimOldFiles(string saveDir, int maxFiles, BackupRunHandle? handle)
+    private static void TrimOldFiles(string saveDir, string database, int maxFiles, BackupRunHandle? handle)
     {
-        // 先清 0KB 空文件，再按数量裁剪，避免空文件占 maxfiles 名额
-        DeleteEmptyFiles(saveDir, handle);
-
         if (maxFiles <= 0)
             return;
 
@@ -432,6 +428,7 @@ public sealed class BackupRunner
         {
             var files = Directory.EnumerateFiles(saveDir)
                 .Select(f => new FileInfo(f))
+                .Where(f => IsBackupFileForDatabase(f.Name, database))
                 .OrderBy(f => f.LastWriteTimeUtc)
                 .ToList();
 
@@ -451,6 +448,35 @@ public sealed class BackupRunner
                 break;
             }
         }
+    }
+
+    /// <summary>
+    /// 判断文件是否是指定数据库生成的标准备份文件。
+    /// 文件名必须严格符合「数据库名_yyyy-MM-dd__HH.mm.ss.sql」，避免数据库名前缀相同时误匹配。
+    /// </summary>
+    private static bool IsBackupFileForDatabase(string fileName, string database)
+    {
+        // 备份文件固定使用 .sql 后缀，并以「数据库名_」开头。
+        const string extension = ".sql";
+        var prefix = database + "_";
+        if (!fileName.StartsWith(prefix, StringComparison.Ordinal)
+            || !fileName.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // 去掉数据库名前缀和扩展名后，中间部分应该只剩备份时间戳。
+        var stampLength = fileName.Length - prefix.Length - extension.Length;
+        if (stampLength <= 0)
+            return false;
+
+        var stamp = fileName.Substring(prefix.Length, stampLength);
+
+        // 严格校验时间戳格式，防止把 orders_test_... 误认为 orders 数据库的备份。
+        return DateTime.TryParseExact(
+            stamp,
+            "yyyy-MM-dd__HH.mm.ss",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None,
+            out _);
     }
 
     /// <summary>

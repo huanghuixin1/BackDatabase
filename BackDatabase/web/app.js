@@ -116,6 +116,11 @@ function renderConfigs() {
         item.classList.add('detail-wide');
         details.append(item);
       }
+      if (config.dbMaxFiles) {
+        const item = detail('每库保留数量', formatDbMaxFiles(config.dbMaxFiles));
+        item.classList.add('detail-wide');
+        details.append(item);
+      }
       card.append(details);
     }
 
@@ -188,6 +193,18 @@ function formatDbTimes(dbTimes) {
       return `${entry.slice(0, at)} → ${formatSchedule(entry.slice(at + 1))}`;
     })
     .join('； ') || '—';
+}
+
+function formatDbMaxFiles(dbMaxFiles) {
+  return String(dbMaxFiles)
+    .split(',')
+    .map(entry => entry.trim())
+    .filter(Boolean)
+    .map(entry => {
+      const at = entry.indexOf(':');
+      return at > 0 ? `${entry.slice(0, at)} → ${entry.slice(at + 1)} 个文件` : entry;
+    })
+    .join('；') || '—';
 }
 
 /** 多个库的运行状态合并成一个：运行中 > 失败 > 成功 > 空闲。 */
@@ -616,6 +633,9 @@ function openDialog(config = null) {
   form.elements.saveDir.value = config?.saveDir || '/backup/';
   // 每库计划：把 conf 里 dbtimes=app:30,hhx:02:00 解析成表格行
   state.dbSchedules = parseDbTimesToRows(config?.dbTimes || '');
+  const dbMaxFiles = parseDbMaxFiles(config?.dbMaxFiles || '');
+  state.dbSchedules.forEach(row => { row.maxFiles = dbMaxFiles.get(row.database.toLowerCase()) || ''; });
+  state.dbMaxFiles = dbMaxFiles;
   renderDbScheduleTable();
   $('#password-hint').textContent = config
     ? (config.passwordConfigured
@@ -637,6 +657,20 @@ function openDialog(config = null) {
 // interval → 每隔 N 分钟
 // daily    → 每天 HH:mm (UTC)
 state.dbSchedules = [];
+state.dbMaxFiles = new Map();
+
+function parseDbMaxFiles(value) {
+  const result = new Map();
+  String(value || '').split(',').map(s => s.trim()).filter(Boolean).forEach(entry => {
+    const at = entry.indexOf(':');
+    if (at <= 0) return;
+    const database = entry.slice(0, at).trim();
+    const maxFiles = entry.slice(at + 1).trim();
+    if (database && /^\d+$/.test(maxFiles) && Number(maxFiles) > 0)
+      result.set(database.toLowerCase(), maxFiles);
+  });
+  return result;
+}
 
 /**
  * 把 conf 里的 dbtimes 字符串解析成表格行。
@@ -683,8 +717,8 @@ function renderDbScheduleTable() {
   const byDb = new Map(state.dbSchedules.map(r => [r.database.toLowerCase(), r]));
   state.dbSchedules = dbs.map(db => {
     const existing = byDb.get(db.toLowerCase());
-    if (existing) return { ...existing, database: db };
-    return { database: db, mode: 'inherit', value: '' };
+    if (existing) return { ...existing, database: db, maxFiles: existing.maxFiles ?? state.dbMaxFiles.get(db.toLowerCase()) ?? '' };
+    return { database: db, mode: 'inherit', value: '', maxFiles: state.dbMaxFiles.get(db.toLowerCase()) || '' };
   });
 
   tbody.replaceChildren();
@@ -748,6 +782,18 @@ function renderDbScheduleTable() {
     tdVal.append(input);
     tr.append(tdVal);
 
+    const tdMaxFiles = document.createElement('td');
+    tdMaxFiles.className = 'db-max-files-col';
+    const maxFilesInput = document.createElement('input');
+    maxFilesInput.type = 'number';
+    maxFilesInput.min = '1';
+    maxFilesInput.step = '1';
+    maxFilesInput.placeholder = `沿用 ${form.elements.maxFiles.value || 180}`;
+    maxFilesInput.value = row.maxFiles || '';
+    maxFilesInput.addEventListener('input', () => { row.maxFiles = maxFilesInput.value; });
+    tdMaxFiles.append(maxFilesInput);
+    tr.append(tdMaxFiles);
+
     // 说明（实时预览，验证用）
     const tdHint = document.createElement('td');
     tdHint.className = 'db-sched-desc';
@@ -795,6 +841,13 @@ function serializeDbSchedules() {
     .join(',');
 }
 
+function serializeDbMaxFiles() {
+  return state.dbSchedules
+    .filter(r => /^\d+$/.test(r.maxFiles || '') && Number(r.maxFiles) > 0)
+    .map(r => `${r.database}:${String(r.maxFiles).trim()}`)
+    .join(',');
+}
+
 async function saveConfig(event) {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(form));
@@ -809,6 +862,7 @@ async function saveConfig(event) {
     databases: data.databases,
     backtime: data.backtime,
     dbTimes: serializeDbSchedules(),
+    dbMaxFiles: serializeDbMaxFiles(),
     maxFiles: Number(data.maxFiles),
     saveDir: data.saveDir,
   };
@@ -970,6 +1024,7 @@ $('#databases-input').addEventListener('input', renderDbScheduleTable);
 form.elements.backtime.addEventListener('input', () => {
   document.querySelectorAll('.db-sched-desc-text').forEach((span, i) => refreshScheduleDesc(i, span));
 });
+form.elements.maxFiles.addEventListener('input', renderDbScheduleTable);
 $('#password-toggle').addEventListener('click', () => {
   const input = form.elements.password;
   input.type = input.type === 'password' ? 'text' : 'password';

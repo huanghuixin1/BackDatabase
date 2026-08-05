@@ -182,7 +182,8 @@ function renderConfigs() {
         <div class="task-card-title"><strong>${escapeHtml(config.fileName)}</strong><span class="pill">${escapeHtml(config.dbType)}</span></div>
         ${config.error ? `<p class="form-message">${escapeHtml(config.error)}</p>` : `
           <p>${escapeHtml(config.user)}@${escapeHtml(config.host)}:${escapeHtml(config.port)} · ${escapeHtml(config.databases)}</p>
-          <p>计划：${escapeHtml(config.backtime)} · 保留：${config.maxFiles} · 目录：${escapeHtml(config.saveDir)}</p>`}
+          <p>计划：${escapeHtml(config.backtime)} · 保留：${config.maxFiles} · 目录：${escapeHtml(config.saveDir)}</p>
+          ${config.dbMaxFiles ? `<p>每库保留：${escapeHtml(config.dbMaxFiles)}</p>` : ''}`}
       </div>
       <div class="task-actions">
         <button class="secondary" type="button" data-task-action="edit" data-file-name="${escapeHtml(config.fileName)}" ${config.error ? "disabled" : ""}>编辑</button>
@@ -209,6 +210,7 @@ function openTaskDialog(config = null) {
   $("task-databases").value = config?.databases || "";
   $("task-backtime").value = config?.backtime || "60";
   $("task-max-files").value = config?.maxFiles || 180;
+  $("task-db-max-files").value = config?.dbMaxFiles || "";
   $("task-save-dir").value = config?.saveDir || "/backup/";
   $("task-password-hint").textContent = config
     ? (config.passwordConfigured
@@ -244,6 +246,7 @@ async function saveTask(event) {
     databases: $("task-databases").value.trim(),
     backtime: $("task-backtime").value.trim(),
     maxFiles: Number($("task-max-files").value),
+    dbMaxFiles: $("task-db-max-files").value.trim(),
     saveDir: $("task-save-dir").value.trim()
   };
   try {

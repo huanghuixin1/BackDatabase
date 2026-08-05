@@ -7,4 +7,5 @@ user=root #用户
 pwd=pwd #密码
 savedir=/backup/ #保存路径 相对于程序当前的执行路径 比如 /test/或者/test2/t/
 maxfiles=50 # 最大保存的文件数量 默认为180
+dbmaxfiles=ss:30,hhx:90 # 可选：每个库单独的最大保留数量；未列出的库沿用 maxfiles
 dbtimes=ss:30,hhx:02:00 # 可选：给单个库指定独立计划，格式 库名:计划，多个用逗号分隔；规则同 backtime（数字=分钟，HH:mm=每天该 UTC 时间）。未列出的库沿用上面的 backtime

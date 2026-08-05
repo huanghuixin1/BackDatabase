@@ -98,6 +98,7 @@ BackDatabase/
 | `dbs` | 逗号分隔数据库名 |
 | `savedir` | 相对程序目录的保存路径，如 `/backup/` |
 | `maxfiles` | 最大保留文件数，默认 180 |
+| `dbmaxfiles` | 可选，每库最大保留文件数，例如 `app:30,analytics:90`；未列出的库沿用 `maxfiles` |
 
 示例 `config/local.conf`：
 
@@ -111,6 +112,7 @@ user=root
 pwd=pwd
 savedir=/backup/
 maxfiles=50
+dbmaxfiles=ss:30,hhx:90
 ```
 
 每日固定时刻：
@@ -145,7 +147,7 @@ nohup ./BackDatabase > /var/log/backdatabase.log 2>&1 &
 - 每个 `.conf` 一个后台任务（并行）
 - 间隔模式：立即备份一次，再按分钟睡眠（对齐原 Go）
 - 每日模式：约 40 秒轮询 UTC 时分，同一天只跑一次
-- 备份前按修改时间删除超出 `maxfiles` 的最旧文件
+- 每个数据库分别按修改时间清理旧文件；`dbmaxfiles` 优先，未单独配置时沿用 `maxfiles`，不同数据库之间不会互相挤占名额
 - 失败删除残缺 SQL 后自动重试一次
 - 备份最终失败时可通过 `env.conf` + HxPush 推送告警
 - 支持 Ctrl+C 优雅退出

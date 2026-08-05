@@ -132,11 +132,11 @@
         <label class="field"><span>备份计划</span><input name="backtime" required value="60"><small>分钟数，或每日 UTC 时刻 HH:mm</small></label>
         <label class="field"><span>最大保留数量</span><input name="maxFiles" type="number" min="1" required value="180"></label>
         <div class="field wide" id="db-schedule-field">
-          <span>每库备份计划（可选）</span>
-          <small>为单个库单独设置计划；选「沿用任务级」的库使用上面的「备份计划」。</small>
+          <span>每库备份设置（可选）</span>
+          <small>可以为每个库单独设置备份计划和最大保留数量；留空时沿用上面的任务级设置。</small>
           <div class="db-schedule-wrap">
             <table class="db-schedule-table" id="db-schedule-table">
-              <thead><tr><th>数据库</th><th>计划类型</th><th class="db-sched-value-col">值</th><th>说明</th></tr></thead>
+              <thead><tr><th>数据库</th><th>计划类型</th><th class="db-sched-value-col">值</th><th class="db-max-files-col">最大保留数</th><th>说明</th></tr></thead>
               <tbody id="db-schedule-tbody"></tbody>
             </table>
             <p class="db-schedule-empty" id="db-schedule-empty">先在「数据库」里填库名（逗号分隔），每填一个会自动出现一行。</p>

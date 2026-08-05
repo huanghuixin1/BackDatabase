@@ -97,13 +97,14 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-family: Georgia, serif;
 .db-times-hint { color: var(--green-dark); font-weight: 650; }
 .db-times-hint.invalid { color: var(--red); }
 /* ====== 每库备份计划表格 ====== */
-.db-schedule-wrap { margin-top:8px; }
-.db-schedule-table { width:100%; border-collapse:collapse; font-size:12px; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+.db-schedule-wrap { margin-top:8px; overflow-x:auto; }
+.db-schedule-table { width:100%; min-width:680px; border-collapse:collapse; font-size:12px; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
 .db-schedule-table th { background:#f0f5f2; text-align:left; padding:8px 12px; color:var(--muted); font-weight:650; font-size:11px; border-bottom:1px solid var(--line); }
 .db-schedule-table td { padding:7px 12px; border-bottom:1px solid #eef2ef; }
 .db-schedule-table tr:last-child td { border-bottom:0; }
 .db-schedule-table select { width:auto; min-width:130px; padding:6px 8px; font-size:12px; }
 .db-schedule-table input { width:100px; padding:6px 8px; font-size:12px; }
+.db-schedule-table .db-max-files-col input { width:112px; }
 .db-schedule-table input[disabled] { opacity:.45; background:transparent; border-color:transparent; }
 .db-sched-name { font-weight:650; font-family:ui-monospace,"Cascadia Code",Consolas,monospace; }
 .db-sched-desc { font-size:11px; color:var(--muted); white-space:nowrap; }

@@ -139,6 +139,7 @@ public static class ConfigLoader
             IntervalMinutes = intervalMinutes,
             DailyAtUtc = dailyAtUtc,
             DbSchedules = ParseDbSchedules(Get("dbtimes", ""), databases),
+            DbMaxFiles = ParseDbMaxFiles(Get("dbmaxfiles", ""), databases),
         };
     }
 
@@ -172,6 +173,35 @@ public static class ConfigLoader
             result[db] = schedule;
         }
 
+        return result;
+    }
+
+    /// <summary>
+    /// 解析 dbmaxfiles 配置项，格式：db1:30,db2:50
+    /// 每个 entry 形如「库名:数量」，数量必须为大于 0 的整数。
+    /// 仅保留在 databases 列表里的库；忽略解析失败的 entry（不抛错，保留其它库可用）。
+    /// </summary>
+    private static IReadOnlyDictionary<string, int> ParseDbMaxFiles(string raw, IReadOnlyList<string> databases)
+    {
+        var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(raw))
+            return result;
+
+        var dbSet = new HashSet<string>(databases, StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var colon = entry.IndexOf(':');
+            if (colon <= 0 || colon >= entry.Length - 1)
+                continue;
+
+            var db = entry[..colon].Trim();
+            var numText = entry[(colon + 1)..].Trim();
+            if (!dbSet.Contains(db))
+                continue;
+
+            if (int.TryParse(numText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var mf) && mf > 0)
+                result[db] = mf;
+        }
         return result;
     }
 

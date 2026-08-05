@@ -496,9 +496,12 @@ public static partial class ConfigWebService
                 };
                 // dbtimes 为空时不写该行，保持旧 conf 干净
                 var dbTimes = (request.DbTimes ?? "").Trim();
+                var dbMaxFiles = (request.DbMaxFiles ?? "").Trim();
                 var content = string.Join(Environment.NewLine, lines) + Environment.NewLine;
                 if (!string.IsNullOrEmpty(dbTimes))
                     content += $"dbtimes={dbTimes}{Environment.NewLine}";
+                if (!string.IsNullOrEmpty(dbMaxFiles))
+                    content += $"dbmaxfiles={dbMaxFiles}{Environment.NewLine}";
 
                 AtomicWrite(path, content);
                 // 用正式解析器做最终校验；失败时会向调用方报告。
@@ -821,6 +824,7 @@ public static partial class ConfigWebService
             ValidateSingleLine(request.SaveDir, "保存目录");
             ValidateSingleLine(request.Backtime, "备份计划");
             ValidateSingleLine(request.DbTimes, "每库备份计划", allowEmpty: true);
+            ValidateSingleLine(request.DbMaxFiles, "每库最大保留数量", allowEmpty: true);
 
             if (!int.TryParse(request.Port, out var port) || port is < 1 or > 65535)
                 throw new ConfigValidationException("端口必须是 1 到 65535 之间的整数。");
@@ -860,6 +864,23 @@ public static partial class ConfigWebService
                         throw new ConfigValidationException($"每库备份计划里的 {db} 未在数据库列表中。");
                     if (ConfigLoader.ParseSingleSchedule(t).IsInvalid)
                         throw new ConfigValidationException($"每库备份计划 {db} 的时间无效: {t}（应为大于 0 的分钟数，或 HH:mm）");
+                }
+            }
+
+            var dbMaxFilesRaw = (request.DbMaxFiles ?? "").Trim();
+            if (!string.IsNullOrEmpty(dbMaxFilesRaw))
+            {
+                foreach (var entry in dbMaxFilesRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    var colon = entry.IndexOf(':');
+                    if (colon <= 0 || colon >= entry.Length - 1)
+                        throw new ConfigValidationException($"每库最大保留数量格式错误: {entry}（应为 库名:数量）");
+                    var db = entry[..colon].Trim();
+                    var value = entry[(colon + 1)..].Trim();
+                    if (!dbSet.Contains(db))
+                        throw new ConfigValidationException($"每库最大保留数量中的 {db} 未在数据库列表中");
+                    if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var maxFiles) || maxFiles <= 0)
+                        throw new ConfigValidationException($"每库最大保留数量 {db} 的值无效: {value}");
                 }
             }
 
@@ -942,6 +963,9 @@ public static partial class ConfigWebService
                     return $"{kv.Key}:{t}";
                 })
                 .ToList();
+            var dbMaxFiles = config.DbMaxFiles
+                .Select(kv => $"{kv.Key}:{kv.Value.ToString(CultureInfo.InvariantCulture)}")
+                .ToList();
 
             return new BackupConfigView
             {
@@ -957,6 +981,7 @@ public static partial class ConfigWebService
                 MaxFiles = config.MaxFiles,
                 Backtime = backtime,
                 DbTimes = string.Join(',', dbTimes),
+                DbMaxFiles = string.Join(',', dbMaxFiles),
             };
         }
 
@@ -1012,6 +1037,7 @@ public sealed class BackupConfigView
     public string Backtime { get; init; } = "60";
     /// <summary>每个库的单独备份计划，格式 db1:60,db2:02:00；空表示全部沿用任务级 Backtime。</summary>
     public string DbTimes { get; init; } = "";
+    public string DbMaxFiles { get; init; } = "";
     public string? Error { get; init; }
 }
 
@@ -1030,6 +1056,7 @@ public sealed class BackupConfigWriteRequest
     public string Backtime { get; init; } = "60";
     /// <summary>每个库的单独备份计划，格式 db1:60,db2:02:00；空表示全部沿用 Backtime。</summary>
     public string DbTimes { get; init; } = "";
+    public string DbMaxFiles { get; init; } = "";
 }
 
 public sealed class EnvironmentView

@@ -48,6 +48,12 @@ public sealed class BackupConfig
     public int MaxFiles { get; init; } = 180;
 
     /// <summary>
+    /// 每个数据库单独的最大保留文件数量（来自 conf 的 dbmaxfiles）。
+    /// key=库名，value=该库的最大保留数。未在此字典中出现的库沿用任务级 <see cref="MaxFiles"/>。
+    /// </summary>
+    public IReadOnlyDictionary<string, int> DbMaxFiles { get; init; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// 备份间隔（分钟）。
     /// 与 <see cref="DailyAtUtc"/> 二选一：
     /// conf 的 backtime 能解析为数字 → 走间隔模式；
@@ -68,6 +74,12 @@ public sealed class BackupConfig
     /// <see cref="IntervalMinutes"/>/<see cref="DailyAtUtc"/>。
     /// </summary>
     public IReadOnlyDictionary<string, DbSchedule> DbSchedules { get; init; } = new Dictionary<string, DbSchedule>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 返回某个库的生效最大保留数：优先 <see cref="DbMaxFiles"/>，否则任务级 <see cref="MaxFiles"/>。
+    /// </summary>
+    public int EffectiveMaxFiles(string database)
+        => DbMaxFiles.TryGetValue(database, out var mf) && mf > 0 ? mf : MaxFiles;
 
     /// <summary>
     /// 返回某个库的生效计划：优先 <see cref="DbSchedules"/>，否则任务级默认。
