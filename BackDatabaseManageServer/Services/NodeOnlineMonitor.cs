@@ -7,7 +7,7 @@ using Microsoft.Extensions.Hosting;
 
 namespace BackDatabaseManageServer.Services;
 
-public sealed record NodeOnlineState(bool Online, DateTimeOffset CheckedAtUtc, string? Error);
+public sealed record NodeOnlineState(bool Online, DateTimeOffset CheckedAtUtc, string? Error, string? Version = null);
 
 public sealed class NodeOnlineStore
 {
@@ -102,7 +102,8 @@ public sealed class NodeOnlineMonitor(
             onlineStore.Set(node.Id, new NodeOnlineState(
                 online,
                 DateTimeOffset.UtcNow,
-                online ? null : $"HTTP {response.StatusCode}"));
+                online ? null : $"HTTP {response.StatusCode}",
+                online ? TryReadVersion(response.Content) : null));
         }
         catch (NodeAuthenticationException ex)
         {
@@ -126,5 +127,22 @@ public sealed class NodeOnlineMonitor(
     {
         var bytes = Encoding.UTF8.GetBytes($"{node.BaseUrl}\n{node.WebPassword}");
         return Convert.ToHexString(SHA256.HashData(bytes));
+    }
+
+    /// <summary>从 back 的 /api/status 响应里读取 version 字段；解析失败返回 null。</summary>
+    private static string? TryReadVersion(string content)
+    {
+        try
+        {
+            using var json = JsonDocument.Parse(content);
+            return json.RootElement.TryGetProperty("version", out var property)
+                   && property.ValueKind == JsonValueKind.String
+                ? property.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 }

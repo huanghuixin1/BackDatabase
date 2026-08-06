@@ -19,6 +19,8 @@ public sealed class BackNodeView
     public bool? Online { get; init; }
     public DateTimeOffset? LastCheckedAtUtc { get; init; }
     public string? OnlineError { get; init; }
+    /// <summary>back 节点 /api/status 报告的版本号；未检测到时为 null。</summary>
+    public string? Version { get; init; }
 }
 
 public sealed class BackNodeWriteRequest

@@ -68,8 +68,12 @@ nav { display:grid; gap:5px; margin-top:48px; }
 .node-tab { display:flex; align-items:center; gap:5px; flex:0 1 168px; min-width:76px; padding:8px 6px 7px 10px; color:var(--muted); background:transparent; border:0; border-bottom:2px solid transparent; cursor:pointer; font-size:13px; white-space:nowrap; }
 .node-tab-label { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .node-tab.active { color:var(--green); background:var(--card); border-bottom-color:var(--green); }
+.node-tab-refresh { display:grid; place-items:center; flex:0 0 auto; width:17px; height:17px; padding:0; border:0; border-radius:50%; color:inherit; background:transparent; font-size:13px; line-height:1; cursor:pointer; }
+.node-tab-refresh:hover { color:var(--green); background:#e2ede7; }
 .node-tab-close { display:grid; place-items:center; flex:0 0 auto; width:17px; height:17px; padding:0; border:0; border-radius:50%; color:inherit; background:transparent; font-size:15px; line-height:1; cursor:pointer; }
 .node-tab-close:hover { color:var(--red); background:#fdecec; }
+.node-badges { display:flex; align-items:center; gap:6px; }
+.version-pill { color:#3f5f7d; background:#eaf1f8; }
 .node-frame-container { flex:1 1 0; position:relative; overflow:hidden; }
 .node-frame { display:none; width:100%; height:100%; border:0; background:white; position:absolute; top:0; left:0; }
 .node-frame.active { display:block; }

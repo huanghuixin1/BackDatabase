@@ -68,7 +68,7 @@ function renderNodes() {
   $("node-empty").classList.toggle("hidden", state.nodes.length !== 0);
   $("node-list").innerHTML = state.nodes.map((node) => `
     <article class="node-card ${node.enabled ? "" : "disabled"}">
-      <div class="node-card-head"><div><span class="status-dot ${onlineClass(node)}"></span><strong>${escapeHtml(node.name)}</strong></div><span class="pill ${node.online === true ? "online" : node.online === false ? "offline" : ""}">${onlineText(node)}</span></div>
+      <div class="node-card-head"><div><span class="status-dot ${onlineClass(node)}"></span><strong>${escapeHtml(node.name)}</strong></div><span class="node-badges">${node.version ? `<span class="pill version-pill" title="back 版本">v${escapeHtml(node.version)}</span>` : ""}<span class="pill ${node.online === true ? "online" : node.online === false ? "offline" : ""}">${onlineText(node)}</span></span></div>
       <p class="node-url">${escapeHtml(node.baseUrl)}</p>
       <p class="node-meta">${onlineDescription(node)}</p>
       <div class="node-actions">
@@ -114,6 +114,20 @@ function closeNodeConsole(id) {
   renderNodeConsole();
 }
 
+function refreshNodeTab(id) {
+  const frame = $("node-frame-container").querySelector(`iframe[data-node-id="${id}"]`);
+  if (!frame) return;
+  const tab = state.consoleTabs.find((item) => item.id === id);
+  const base = tab?.src || frame.src;
+  // 跨域 iframe 不能调 contentWindow.location.reload()，改 src 触发重新加载；
+  // 时间戳加在 query 上保证真正重新请求，#k= 片段保留在 fragment 里，back 会自动重新登录。
+  const hashIndex = base.indexOf("#");
+  const url = hashIndex >= 0
+    ? `${base.slice(0, hashIndex)}?t=${Date.now()}${base.slice(hashIndex)}`
+    : `${base}${base.includes("?") ? "&" : "?"}t=${Date.now()}`;
+  frame.src = url;
+}
+
 function renderNodeConsole() {
   // 控制台是覆盖层，收起时只隐藏容器、保留 iframe，回来时不用重新加载和登录
   const hasTabs = state.consoleTabs.length > 0;
@@ -138,13 +152,21 @@ function renderNodeConsole() {
       if (event.key === "Enter" || event.key === " ") { event.preventDefault(); state.activeConsoleTabId = tab.id; renderNodeConsole(); }
     });
 
+    const refresh = document.createElement("button");
+    refresh.className = "node-tab-refresh";
+    refresh.type = "button";
+    refresh.textContent = "↻";
+    refresh.title = "刷新该控制台页面";
+    refresh.setAttribute("aria-label", `刷新 ${tab.name}`);
+    refresh.addEventListener("click", (event) => { event.stopPropagation(); refreshNodeTab(tab.id); });
+
     const close = document.createElement("button");
     close.className = "node-tab-close";
     close.type = "button";
     close.textContent = "×";
     close.setAttribute("aria-label", `关闭 ${tab.name}`);
     close.addEventListener("click", (event) => { event.stopPropagation(); closeNodeConsole(tab.id); });
-    button.append(close);
+    button.append(refresh, close);
     return button;
   }));
 

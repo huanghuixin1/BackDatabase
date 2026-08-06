@@ -272,6 +272,7 @@ static BackNodeView ToView(BackNode node, NodeOnlineState? onlineState = null) =
     Online = onlineState?.Online,
     LastCheckedAtUtc = onlineState?.CheckedAtUtc,
     OnlineError = onlineState?.Error,
+    Version = onlineState?.Version,
 };
 
 static async Task<IResult> ProxyAsync(
