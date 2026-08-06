@@ -14,7 +14,7 @@
 - 支持的数据库类型：`mysql`、`mariadb` 使用 `mysqldump`；`pgsql`、`postgres`、`postgresql` 使用 `pg_dump`。对应命令必须存在于运行机器的 `PATH`。
 - 调度模式：数字 `backtime > 0` 表示间隔分钟，启动后立即执行一次；`HH:mm` 表示每日 UTC 定点，约 40 秒轮询，同一天只执行一次。备份文件名时间戳同样使用 UTC。
 - Web 实际监听 `http://0.0.0.0:5080`。配置 `webPassword` 时使用 `HxSimpleWebAuth` 的 Bearer Token 认证；未配置口令时，受保护 API 仅允许回环来源访问，远程请求返回 403。
-- Web 只负责把配置写入磁盘，不热加载。新增、修改、删除任务配置或环境配置后必须重启进程才影响调度器。
+- Web 对备份任务配置执行原子持久化并同步热更新运行态调度；新增、修改、删除、恢复任务立即生效。`env.conf` 的推送和访问口令仍是启动快照，修改后需要重启。
 - 外部依赖采用 DLL `Reference`：`HxPushModel`、`HxPushSdk`、`HxSimpleWebAuth`。其 `HintPath` 依赖本机相邻仓库的固定目录布局。
 - 正式发布 profile 为 `win_x64` 和 `linux_amd64`：x64、self-contained、trimmed、非单文件。self-contained 只免除 .NET Runtime，不能替代数据库客户端工具。
 - 当前仓库没有自动化测试项目，也没有 `global.json`；构建机需安装 .NET 10 SDK。
@@ -22,7 +22,7 @@
 ## 长期规则
 
 - 不得把路径基准从 `AppContext.BaseDirectory` 改成 `Environment.CurrentDirectory`，也不要让 `env.conf`、`config/`、`web/` 的定位依赖启动目录。
-- 保持配置启动快照语义，不擅自增加热加载。若需求明确要热加载，必须同时设计调度任务的增删改、并发和失败回滚。
+- 备份任务热更新必须统一经过 `BackupScheduleManager`：连接、凭据、目录和保留数量替换运行态快照；计划或数据库集合变化只重建受影响工作项；删除停止未来调度但不取消已开始的备份；持久化或应用失败必须回滚。
 - 新增数据库类型必须实现 `IDatabaseBackupStrategy`，返回 `DumpCommand`，并在 `DatabaseBackupStrategyFactory.CreateDefault()` 注册；不要在 `BackupRunner` 中堆数据库类型分支。
 - 数据库备份命令必须通过 `ProcessStartInfo.ArgumentList` 传参，不得拼接用户输入后交给 shell。`DisplayCommand` 和日志中的密码、Push Key、Web 口令必须脱敏。`web/AppEntry.cs` 的 Windows 自重启为受控例外，它通过 `cmd /c start` 脱离父进程；修改时必须保持参数转义，且不得引入 Web 用户可控参数。
 - 保持调度语义：间隔模式立即首跑；每日模式使用 UTC 且每日最多一次；取消时终止 dump 进程树、删除残缺文件，不重试、不发送失败通知。
@@ -55,7 +55,8 @@
 | `Models/EnvConfig.cs` | `env.conf` 数据模型、Web 认证是否启用 |
 | `utils/EnvConfigLoader.cs` | 启动时加载全局环境配置及失败回退 |
 | `utils/AppJsonContext.cs` | System.Text.Json 源生成与第三方反射回退配置 |
-| `Services/BackupScheduler.cs` | 每配置独立调度、间隔模式、每日 UTC 模式 |
+| `Services/BackupScheduler.cs` | 旧版启动快照调度器，当前入口不再装配；后续清理时可删除 |
+| `Services/BackupScheduleManager.cs` | 备份任务运行态快照、逐库动态调度、热新增/修改/删除生命周期 |
 | `Services/BackupRunner.cs` | 文件清理、逐库备份、进程生命周期、重试、取消、失败通知时机 |
 | `Services/Strategies/IDatabaseBackupStrategy.cs` | 数据库策略接口和 `DumpCommand` 契约 |
 | `Services/Strategies/DatabaseBackupStrategyFactory.cs` | 数据库类型注册与解析入口 |
@@ -88,4 +89,4 @@
 - 2026-07-31：按 Project Memory 模板重新梳理本文件，以当前源码为准补齐运行契约、Web 认证、发布要求和已知问题。
 - 2026-07-30：Web 认证迁移到 `HxSimpleWebAuth`，前端改用 Bearer Token，并保留 `/api/session` 兼容接口。
 - 当前已支持 MySQL、MariaDB 和 PostgreSQL 多个别名；数据库差异通过策略模块隔离。
-- 当前 Web 管理页支持配置 CRUD、环境配置、状态查询和进程内重启；配置写入后仍需重启才影响调度器。
+- 当前 Web 管理页支持配置 CRUD、环境配置、状态查询和进程内重启；备份任务配置已支持热更新，环境配置仍需重启。

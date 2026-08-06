@@ -43,7 +43,7 @@ var runRegistry = new BackupRunRegistry();
 // 备份执行器：真正调用 mysqldump / pg_dump
 var runner = new BackupRunner(baseDir, pushNotifier: pushNotifier, registry: runRegistry);
 // 调度器：按间隔分钟或每日 UTC 时刻循环触发
-var scheduler = new BackupScheduler(runner);
+var scheduler = new BackupScheduleManager(runner);
 
 // 每个 .conf 启动一个后台任务（对应 Go 的 go startBackInterval）
 scheduler.StartAll(configs);
@@ -54,7 +54,7 @@ var builder = WebApplication.CreateBuilder(applicationArgs);
 builder.WebHost.UseUrls(webUrls);
 var app = builder.Build();
 
-ConfigWebService.Configure(app, baseDir, configDir, env.WebPassword, runner, runRegistry);
+ConfigWebService.Configure(app, baseDir, configDir, env.WebPassword, runner, runRegistry, scheduler);
 
 // Ctrl+C / SIGTERM 由 Kestrel 宿主统一处理，并同步停止原有备份调度。
 app.Lifetime.ApplicationStopping.Register(() =>

@@ -52,7 +52,7 @@ BackDatabase/
 2. 扫描同目录 `config/*.conf`（仅 `.conf`，`.example` 不加载）
 3. 启动本机 Kestrel 管理界面：`http://127.0.0.1:5080`
 
-页面可维护 `config/*.conf` 备份配置及 `env.conf` 推送配置。保存后需重启程序生效；默认仅监听本机，不提供远程未认证管理端口。
+页面可维护 `config/*.conf` 备份配置及 `env.conf` 推送配置。备份任务新增、修改、删除和恢复后立即生效；`env.conf` 中的推送与访问口令变更仍需重启。
 
 ## 全局环境配置 `env.conf`
 
@@ -142,7 +142,7 @@ chmod +x backdatabase.sh
 # 可用：./backdatabase.sh stop | restart | status
 ```
 
-修改配置后需**重启程序**。
+备份任务配置保存后立即生效；修改 `env.conf` 后需**重启程序**。
 
 ## 行为说明
 

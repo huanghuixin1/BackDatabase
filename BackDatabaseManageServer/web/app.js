@@ -1,6 +1,6 @@
 const TOKEN_KEY = "backmanage_token";
 const PASSWORD_KEY = "backmanage_password";
-const state = { token: sessionStorage.getItem(TOKEN_KEY), nodes: [], selected: null, configs: [], editingTask: null, onlineTimer: null, refreshingAll: false, consoleTabs: [], activeConsoleTabId: null, consoleMinimized: false };
+const state = { token: sessionStorage.getItem(TOKEN_KEY), nodes: [], selected: null, selectedHotReload: false, configs: [], editingTask: null, onlineTimer: null, refreshingAll: false, consoleTabs: [], activeConsoleTabId: null, consoleMinimized: false };
 const copyState = { sourceId: null, configs: [] };
 
 const $ = (id) => document.getElementById(id);
@@ -256,6 +256,7 @@ async function addNode(event) {
 async function openDetails(id) {
   const node = state.nodes.find((item) => item.id === id); if (!node) return;
   state.selected = node;
+  state.selectedHotReload = false;
   state.configs = [];
   $("details-title").textContent = node.name;
   $("restart-required").classList.add("hidden");
@@ -271,6 +272,7 @@ async function refreshDetails() {
     const [status, configs] = await Promise.all([
       api(`/api/nodes/${state.selected.id}/status`), api(`/api/nodes/${state.selected.id}/configs`)
     ]);
+    state.selectedHotReload = status?.backupConfigHotReload === true;
     $("status-output").textContent = JSON.stringify(status, null, 2);
     state.configs = Array.isArray(configs) ? configs : [];
     renderConfigs();
@@ -365,7 +367,7 @@ async function saveTask(event) {
       : `/api/nodes/${state.selected.id}/configs`;
     await api(path, { method: editing ? "PUT" : "POST", body: JSON.stringify(payload) });
     closeTaskDialog();
-    markRestartRequired();
+    markRestartRequiredIfNeeded();
     await loadConfigs();
     showToast(editing ? "备份任务已更新" : "备份任务已创建");
   } catch (error) {
@@ -377,7 +379,7 @@ async function deleteTask(fileName) {
   if (!state.selected || !confirm(`确定删除备份任务 ${fileName} 吗？`)) return;
   try {
     await api(`/api/nodes/${state.selected.id}/configs/${encodeURIComponent(fileName)}`, { method: "DELETE" });
-    markRestartRequired();
+    markRestartRequiredIfNeeded();
     await loadConfigs();
     showToast("备份任务已删除");
   } catch (error) { showToast(error.message, true); }
@@ -475,7 +477,7 @@ async function copyTasks(event) {
       $("copy-message").title = detail;
     }
     if (result.copied?.length) {
-      markRestartRequired();
+      markRestartRequiredIfNeeded();
       await loadConfigs();
       showToast(`已复制 ${result.copied.length} 个任务到 ${state.selected.name}`);
     }
@@ -493,8 +495,9 @@ function closeCopyDialog() {
   copyState.configs = [];
 }
 
-function markRestartRequired() {
-  $("restart-required").classList.remove("hidden");
+function markRestartRequiredIfNeeded() {
+  if (!state.selectedHotReload)
+    $("restart-required").classList.remove("hidden");
 }
 
 async function refreshNode(id, button = null) {

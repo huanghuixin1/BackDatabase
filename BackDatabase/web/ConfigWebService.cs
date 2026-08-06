@@ -35,9 +35,10 @@ public static partial class ConfigWebService
         "IL3050",
         Justification = "项目不发布 NativeAOT；Minimal API 路由允许使用运行时代码生成。")]
     public static void Configure(WebApplication app, string baseDir, string configDir, string? webPassword = null,
-        BackupRunner? runner = null, BackupRunRegistry? runRegistry = null)
+        BackupRunner? runner = null, BackupRunRegistry? runRegistry = null,
+        BackupScheduleManager? scheduleManager = null)
     {
-        var store = new ConfigFileStore(baseDir, configDir);
+        var store = new ConfigFileStore(baseDir, configDir, scheduleManager);
         var authRequired = !string.IsNullOrEmpty(webPassword);
         var auth = new WebAdminAuth(webPassword ?? string.Empty, logDirectory: baseDir);
         var webDir = Path.Combine(baseDir, "web");
@@ -160,7 +161,15 @@ public static partial class ConfigWebService
                 return Results.Problem("备份执行器未配置。", statusCode: 500);
             try
             {
-                var config = store.LoadConfig(fileName);
+                var config = scheduleManager is not null
+                             && scheduleManager.TryGetSnapshot(fileName, out var current)
+                    ? current
+                    : store.LoadConfig(fileName);
+                if (!string.IsNullOrWhiteSpace(db)
+                    && !config.Databases.Contains(db, StringComparer.OrdinalIgnoreCase))
+                {
+                    return Results.BadRequest(new { message = $"数据库 {db} 不在配置 {fileName} 中。" });
+                }
                 // 后台执行：RunAsync 内部会自行 BeginRun/FinishRun（取锁、记状态、写日志、释放）。
                 // 返回 false 表示该库已有备份在跑——打日志即可（HTTP 已先回复 200）。
                 _ = Task.Run(async () =>
@@ -219,26 +228,17 @@ public static partial class ConfigWebService
             if (runner is null || runRegistry is null)
                 return Results.Problem("备份执行器未配置。", statusCode: 500);
 
-            var configs = store.List().ToList();
+            var configs = scheduleManager?.GetSnapshots()
+                          ?? store.List()
+                              .Where(view => string.IsNullOrEmpty(view.Error))
+                              .Select(view => store.LoadConfig(view.FileName))
+                              .ToArray();
             if (configs.Count == 0)
                 return Results.Ok(new { message = "暂无可备份的配置。", triggered = 0 });
 
             var triggered = 0;
-            foreach (var view in configs)
+            foreach (var config in configs)
             {
-                if (!string.IsNullOrEmpty(view.Error))
-                    continue; // 配置本身有错误，跳过
-                BackupConfig config;
-                try
-                {
-                    config = store.LoadConfig(view.FileName);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[backup-all] 加载配置 {view.FileName} 失败: {ex.Message}");
-                    continue;
-                }
-
                 triggered++;
                 // 对该配置下的每个库各触发一次后台备份
                 foreach (var database in config.Databases)
@@ -293,7 +293,10 @@ public static partial class ConfigWebService
             service = "BackDatabase",
             version = AppInfo.Version,
             utcNow = DateTime.UtcNow,
+            // 兼容旧客户端：环境配置仍有需要重启的字段，因此通用标记保持 true。
             restartRequiredAfterChanges = true,
+            backupConfigHotReload = true,
+            environmentRestartRequired = true,
         }));
 
         // 重启服务：本机回环 + 已登录后才能到达（中间件已拦 /api）。后台拉起新进程后退出当前进程。
@@ -435,12 +438,14 @@ public static partial class ConfigWebService
         private readonly string _baseDir;
         private readonly string _configDir;
         private readonly string _trashDir;
+        private readonly BackupScheduleManager? _scheduleManager;
         private readonly object _writeLock = new();
 
-        public ConfigFileStore(string baseDir, string configDir)
+        public ConfigFileStore(string baseDir, string configDir, BackupScheduleManager? scheduleManager)
         {
             _baseDir = Path.GetFullPath(baseDir);
             _configDir = Path.GetFullPath(configDir);
+            _scheduleManager = scheduleManager;
             Directory.CreateDirectory(_configDir);
             // 回收站目录：config/.trash。ConfigLoader.LoadAll 只枚举 *.conf（不含子目录），
             // 回收站里的文件不会被当作活动任务加载，天然隔离。
@@ -480,6 +485,7 @@ public static partial class ConfigWebService
 
             lock (_writeLock)
             {
+                var previousContent = File.Exists(path) ? File.ReadAllText(path) : null;
                 var password = request.Password ?? "";
                 if (File.Exists(path) && string.IsNullOrEmpty(request.Password) && !request.ClearPassword)
                     password = ConfigLoader.ParseFile(path).Password;
@@ -505,10 +511,29 @@ public static partial class ConfigWebService
                 if (!string.IsNullOrEmpty(dbMaxFiles))
                     content += $"dbmaxfiles={dbMaxFiles}{Environment.NewLine}";
 
-                AtomicWrite(path, content);
-                // 用正式解析器做最终校验；失败时会向调用方报告。
-                var saved = ConfigLoader.ParseFile(path);
-                return new { message = "配置已保存，重启 BackDatabase 后生效。", config = ToView(saved) };
+                try
+                {
+                    AtomicWrite(path, content);
+                    // 用正式解析器做最终校验，并立即替换运行态快照。
+                    var saved = ConfigLoader.ParseFile(path);
+                    _scheduleManager?.Upsert(saved);
+                    return new { message = "配置已保存并立即生效。", config = ToView(saved) };
+                }
+                catch
+                {
+                    if (previousContent is null)
+                    {
+                        if (File.Exists(path))
+                            File.Delete(path);
+                        _scheduleManager?.Remove(fileName);
+                    }
+                    else
+                    {
+                        AtomicWrite(path, previousContent);
+                        _scheduleManager?.Upsert(ConfigLoader.ParseFile(path));
+                    }
+                    throw;
+                }
             }
         }
 
@@ -530,12 +555,22 @@ public static partial class ConfigWebService
                     trashName = $"{Path.GetFileNameWithoutExtension(fileName)}__{stamp}.conf";
                     trashPath = Path.Combine(_trashDir, trashName);
                 }
-                File.Move(path, trashPath, overwrite: false);
-                // 记录删除时间（移动会保留原 LastWriteTime，故单独写一次）
-                File.SetLastWriteTimeUtc(trashPath, DateTime.UtcNow);
+                try
+                {
+                    File.Move(path, trashPath, overwrite: false);
+                    // 记录删除时间（移动会保留原 LastWriteTime，故单独写一次）
+                    File.SetLastWriteTimeUtc(trashPath, DateTime.UtcNow);
+                    _scheduleManager?.Remove(fileName);
+                }
+                catch
+                {
+                    if (!File.Exists(path) && File.Exists(trashPath))
+                        File.Move(trashPath, path, overwrite: false);
+                    throw;
+                }
             }
 
-            return new { message = "配置已移入回收站，重启 BackDatabase 后生效。" };
+            return new { message = "配置已移入回收站，调度已立即停止。" };
         }
 
         /// <summary>列出回收站中所有被删除的配置（按删除时间倒序）。</summary>
@@ -584,9 +619,20 @@ public static partial class ConfigWebService
                     throw new FileNotFoundException($"回收站中没有配置 {fileName}。");
                 if (File.Exists(activePath))
                     throw new ConfigValidationException($"已存在同名活动配置 {fileName}，请先重命名或删除现有配置。");
-                File.Move(trashPath, activePath, overwrite: false);
+                try
+                {
+                    File.Move(trashPath, activePath, overwrite: false);
+                    var restored = ConfigLoader.ParseFile(activePath);
+                    _scheduleManager?.Upsert(restored);
+                }
+                catch
+                {
+                    if (!File.Exists(trashPath) && File.Exists(activePath))
+                        File.Move(activePath, trashPath, overwrite: false);
+                    throw;
+                }
             }
-            return new { message = "配置已从回收站恢复，重启 BackDatabase 后生效。" };
+            return new { message = "配置已从回收站恢复并立即生效。" };
         }
 
         /// <summary>从回收站彻底删除一个配置（不可恢复）。</summary>
