@@ -586,6 +586,10 @@ $("console-minimize").addEventListener("click", () => { state.consoleMinimized =
 $("console-restore").addEventListener("click", () => { state.consoleMinimized = false; renderNodeConsole(); });
 $("detail-refresh").addEventListener("click", refreshDetails);
 $("detail-restart").addEventListener("click", () => state.selected && restartNode(state.selected.id));
+// 点击详情对话框的空白背景（backdrop）时关闭，不必非点右上角叉
+$("details-dialog").addEventListener("click", (event) => {
+  if (event.target === $("details-dialog")) $("details-dialog").close();
+});
 $("add-task").addEventListener("click", () => openTaskDialog());
 $("copy-tasks").addEventListener("click", openCopyDialog);
 $("copy-source-node").addEventListener("change", (event) => loadCopySourceConfigs(event.target.value));
