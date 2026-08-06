@@ -1,3 +1,5 @@
+<img width="1086" height="731" alt="image" src="https://github.com/user-attachments/assets/5470ebe0-58a0-41e6-8051-cc1cf4d00fee" />
+
 # BackDatabase
 
 通过调用本机 `mysqldump` / `pg_dump`，按 `config/*.conf` 定时导出 SQL，并自动清理超出数量的旧备份。
@@ -154,8 +156,3 @@ chmod +x backdatabase.sh
 - 备份最终失败时可通过 `env.conf` + HxPush 推送告警
 - 支持 Ctrl+C 优雅退出
 
-## 与 Go 版差异
-
-- 使用 `Process` + 参数列表调用客户端（mysqldump 标准输出直写文件），减少 shell 注入风险
-- 每日模式避免同一分钟重复执行
-- 配置解析为自实现键值解析
