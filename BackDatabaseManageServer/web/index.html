@@ -70,7 +70,7 @@
       <div class="detail-actions"><button id="detail-refresh" class="secondary" type="button">刷新状态</button><button id="detail-restart" class="warning" type="button">重启 back</button></div>
       <div id="restart-required" class="restart-required hidden">备份任务已修改，需要重启 BackDatabase 后生效。</div>
       <h4>状态</h4><pre id="status-output" class="code-block">加载中…</pre>
-      <div class="task-heading"><h4>备份任务</h4><button id="add-task" class="primary compact" type="button">新增任务</button></div>
+      <div class="task-heading"><h4>备份任务</h4><div class="task-heading-actions"><button id="copy-tasks" class="secondary compact" type="button">从节点复制任务</button><button id="add-task" class="primary compact" type="button">新增任务</button></div></div>
       <div id="configs-output" class="task-list"><div class="empty compact-empty">加载中…</div></div>
     </form>
   </dialog>
@@ -98,6 +98,23 @@
       <p id="task-password-hint" class="storage-hint"></p>
       <div class="form-actions"><button class="primary" type="submit">保存任务</button><button id="task-cancel" class="secondary" type="button">取消</button></div>
       <p id="task-message" class="form-message" role="alert"></p>
+    </form>
+  </dialog>
+
+  <dialog id="copy-dialog">
+    <form id="copy-form" class="dialog-card">
+      <button id="copy-close" class="dialog-close" type="button" aria-label="关闭">×</button>
+      <div class="eyebrow">COPY TASKS</div>
+      <h3>从其他节点复制任务</h3>
+      <label>目标节点<input id="copy-target-name" readonly></label>
+      <label>来源节点<select id="copy-source-node"></select></label>
+      <div class="copy-toolbar">
+        <label class="check"><input id="copy-select-all" type="checkbox" checked> 全选</label>
+        <label class="check"><input id="copy-overwrite" type="checkbox"> 覆盖目标节点上已存在的同名任务</label>
+      </div>
+      <div id="copy-configs" class="task-list"><div class="empty compact-empty">请先选择来源节点。</div></div>
+      <div class="form-actions"><button id="copy-submit" class="primary" type="submit">复制到目标节点</button><button id="copy-cancel" class="secondary" type="button">取消</button></div>
+      <p id="copy-message" class="form-message" role="alert"></p>
     </form>
   </dialog>
 

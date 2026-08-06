@@ -169,6 +169,97 @@ app.MapDelete("/api/nodes/{id:guid}/configs/{fileName}", async (Guid id, string 
 app.MapPut("/api/nodes/{id:guid}/environment", async (Guid id, JsonElement body, BackNodeClient client, CancellationToken cancellationToken) =>
     await ProxyAsync(nodeStore, client, id, (node, token) => client.SaveEnvironmentAsync(node, body, token), cancellationToken));
 
+// 复制任务：把 sourceNodeId 节点上的任务（configs）复制到 targetId 节点。
+// 可指定 fileNames 只复制部分任务；overwrite 为 false 时跳过目标节点上已存在的同名任务。
+app.MapPost("/api/nodes/{targetId:guid}/configs/copy", async (Guid targetId, CopyConfigsRequest request, BackNodeClient client, CancellationToken cancellationToken) =>
+{
+    var target = nodeStore.Find(targetId);
+    if (target is null)
+        return Results.NotFound(new { message = "目标节点不存在。" });
+    if (!target.Enabled)
+        return Results.Problem("目标节点已禁用。", statusCode: 409);
+
+    var source = nodeStore.Find(request.SourceNodeId);
+    if (source is null)
+        return Results.NotFound(new { message = "源节点不存在。" });
+    if (!source.Enabled)
+        return Results.Problem("源节点已禁用。", statusCode: 409);
+    if (source.Id == target.Id)
+        return Results.BadRequest(new { message = "源节点与目标节点不能相同。" });
+
+    try
+    {
+        var sourceResponse = await client.GetConfigsAsync(source, cancellationToken);
+        if (sourceResponse.StatusCode is < 200 or >= 300)
+            return Results.Content(sourceResponse.Content, sourceResponse.ContentType, Encoding.UTF8, sourceResponse.StatusCode);
+
+        var sourceConfigs = CopyHelpers.ParseRemoteConfigs(sourceResponse.Content);
+        if (sourceConfigs is null)
+            return Results.Problem("源节点返回的任务数据格式无法解析。", statusCode: 502);
+
+        var selectedNames = new HashSet<string>(
+            request.FileNames?.Select(name => name.Trim()).Where(name => name.Length > 0) ?? [],
+            StringComparer.OrdinalIgnoreCase);
+
+        HashSet<string>? targetNames = null;
+        if (!request.Overwrite)
+        {
+            var targetResponse = await client.GetConfigsAsync(target, cancellationToken);
+            if (targetResponse.StatusCode is < 200 or >= 300)
+                return Results.Content(targetResponse.Content, targetResponse.ContentType, Encoding.UTF8, targetResponse.StatusCode);
+            var targetConfigs = CopyHelpers.ParseRemoteConfigs(targetResponse.Content);
+            if (targetConfigs is null)
+                return Results.Problem("目标节点返回的任务数据格式无法解析。", statusCode: 502);
+            targetNames = new HashSet<string>(targetConfigs.Select(config => config.FileName), StringComparer.OrdinalIgnoreCase);
+        }
+
+        var copied = new List<string>();
+        var skipped = new List<string>();
+        var failed = new List<object>();
+
+        foreach (var config in sourceConfigs)
+        {
+            var fileName = config.FileName;
+            if (string.IsNullOrWhiteSpace(fileName) || config.Error is not null)
+                continue;
+            if (selectedNames.Count > 0 && !selectedNames.Contains(fileName))
+                continue;
+            if (targetNames is not null && targetNames.Contains(fileName))
+            {
+                skipped.Add(fileName);
+                continue;
+            }
+
+            try
+            {
+                var result = await client.SaveConfigAsync(target, null, CopyHelpers.BuildConfigPayload(config), cancellationToken);
+                if (result.StatusCode is >= 200 and < 300)
+                    copied.Add(fileName);
+                else
+                    failed.Add(new { fileName, message = $"目标节点返回 HTTP {result.StatusCode}。" });
+            }
+            catch (Exception ex)
+            {
+                failed.Add(new { fileName, message = ex.Message });
+            }
+        }
+
+        return Results.Ok(new { copied, skipped, failed });
+    }
+    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+    {
+        return Results.Problem("请求节点超时或已取消。", statusCode: 504);
+    }
+    catch (HttpRequestException ex)
+    {
+        return Results.Problem($"请求节点失败: {ex.Message}", statusCode: 502);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Problem(ex.Message, statusCode: 400);
+    }
+});
+
 app.Run("http://0.0.0.0:5090");
 
 static BackNodeView ToView(BackNode node, NodeOnlineState? onlineState = null) => new()
@@ -287,4 +378,40 @@ static async Task WriteApiResponseAsync(HttpContext context, ApiResponse respons
         context.Response.Headers.Allow = response.AllowHeader;
     context.Response.ContentType = "application/json; charset=utf-8";
     await context.Response.Body.WriteAsync(response.Body, context.RequestAborted);
+}
+
+/// <summary>复制任务相关的反序列化与请求构造工具。</summary>
+static partial class CopyHelpers
+{
+    // back 的 /api/configs 返回驼峰字段（fileName、dbType...），反序列化必须忽略大小写
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
+
+    public static List<RemoteConfigView>? ParseRemoteConfigs(string content)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<List<RemoteConfigView>>(content, Options);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    public static JsonElement BuildConfigPayload(RemoteConfigView config) => JsonSerializer.SerializeToElement(new
+    {
+        fileName = config.FileName,
+        dbType = config.DbType,
+        host = config.Host,
+        port = config.Port,
+        user = config.User,
+        password = config.Password,
+        clearPassword = false,
+        databases = config.Databases,
+        saveDir = config.SaveDir,
+        maxFiles = config.MaxFiles,
+        backtime = config.Backtime,
+        dbTimes = config.DbTimes,
+        dbMaxFiles = config.DbMaxFiles,
+    });
 }

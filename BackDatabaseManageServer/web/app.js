@@ -1,6 +1,7 @@
 const TOKEN_KEY = "backmanage_token";
 const PASSWORD_KEY = "backmanage_password";
 const state = { token: sessionStorage.getItem(TOKEN_KEY), nodes: [], selected: null, configs: [], editingTask: null, onlineTimer: null, refreshingAll: false, consoleTabs: [], activeConsoleTabId: null, consoleMinimized: false };
+const copyState = { sourceId: null, configs: [] };
 
 const $ = (id) => document.getElementById(id);
 
@@ -367,6 +368,109 @@ async function loadConfigs() {
   renderConfigs();
 }
 
+async function openCopyDialog() {
+  if (!state.selected) return;
+  copyState.sourceId = null;
+  copyState.configs = [];
+  $("copy-target-name").value = state.selected.name;
+  $("copy-message").textContent = "";
+  $("copy-message").className = "form-message";
+  $("copy-select-all").checked = true;
+  $("copy-overwrite").checked = false;
+
+  const candidates = state.nodes.filter((node) => node.id !== state.selected.id && node.enabled);
+  const select = $("copy-source-node");
+  select.innerHTML = "";
+  for (const node of candidates) {
+    const option = document.createElement("option");
+    option.value = node.id;
+    option.textContent = `${node.name}（${node.baseUrl}）`;
+    select.append(option);
+  }
+  select.disabled = candidates.length === 0;
+
+  $("copy-configs").innerHTML = candidates.length === 0
+    ? '<div class="empty compact-empty">没有其它可复制的节点，请先在概览中添加节点。</div>'
+    : '<div class="empty compact-empty">加载中…</div>';
+
+  $("copy-dialog").showModal();
+  if (candidates.length > 0) await loadCopySourceConfigs(select.value);
+}
+
+async function loadCopySourceConfigs(sourceId) {
+  copyState.sourceId = sourceId;
+  $("copy-configs").innerHTML = '<div class="empty compact-empty">加载中…</div>';
+  $("copy-select-all").checked = true;
+  try {
+    const configs = await api(`/api/nodes/${sourceId}/configs`);
+    copyState.configs = Array.isArray(configs) ? configs.filter((config) => !config.error) : [];
+    renderCopyConfigs();
+  } catch (error) {
+    copyState.configs = [];
+    $("copy-configs").innerHTML = `<div class="empty compact-empty">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderCopyConfigs() {
+  if (!copyState.configs.length) {
+    $("copy-configs").innerHTML = '<div class="empty compact-empty">该节点暂无备份任务。</div>';
+    return;
+  }
+  $("copy-configs").innerHTML = copyState.configs.map((config, index) => `
+    <label class="check copy-task">
+      <input type="checkbox" data-copy-index="${index}" checked>
+      <span><strong>${escapeHtml(config.fileName)}</strong> · ${escapeHtml(config.dbType)} · ${escapeHtml(config.user)}@${escapeHtml(config.host)} · ${escapeHtml(config.databases)}</span>
+    </label>`).join("");
+}
+
+async function copyTasks(event) {
+  event.preventDefault();
+  if (!state.selected || !copyState.sourceId) return;
+  const fileNames = copyState.configs
+    .filter((config, index) => document.querySelector(`input[data-copy-index="${index}"]`)?.checked)
+    .map((config) => config.fileName);
+  if (!fileNames.length) { $("copy-message").textContent = "请至少选择一个任务。"; return; }
+
+  $("copy-message").textContent = "";
+  const submit = $("copy-submit");
+  submit.disabled = true;
+  submit.textContent = "复制中…";
+  try {
+    const result = await api(`/api/nodes/${state.selected.id}/configs/copy`, { method: "POST", body: JSON.stringify({
+      sourceNodeId: copyState.sourceId,
+      fileNames,
+      overwrite: $("copy-overwrite").checked
+    }) });
+    const parts = [];
+    if (result.copied?.length) parts.push(`已复制 ${result.copied.length} 个`);
+    if (result.skipped?.length) parts.push(`跳过 ${result.skipped.length} 个同名任务`);
+    if (result.failed?.length) parts.push(`失败 ${result.failed.length} 个`);
+    $("copy-message").textContent = parts.join("，") || "没有任务被复制。";
+    $("copy-message").className = "form-message" + ((result.failed?.length || 0) > 0 ? "" : " success");
+    if (result.failed?.length) {
+      const detail = result.failed.map((item) => `${item.fileName}：${item.message}`).join("；");
+      console.warn("复制任务失败明细", result.failed);
+      $("copy-message").title = detail;
+    }
+    if (result.copied?.length) {
+      markRestartRequired();
+      await loadConfigs();
+      showToast(`已复制 ${result.copied.length} 个任务到 ${state.selected.name}`);
+    }
+  } catch (error) {
+    $("copy-message").textContent = error.message;
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "复制到目标节点";
+  }
+}
+
+function closeCopyDialog() {
+  $("copy-dialog").close();
+  copyState.sourceId = null;
+  copyState.configs = [];
+}
+
 function markRestartRequired() {
   $("restart-required").classList.remove("hidden");
 }
@@ -461,6 +565,14 @@ $("console-restore").addEventListener("click", () => { state.consoleMinimized = 
 $("detail-refresh").addEventListener("click", refreshDetails);
 $("detail-restart").addEventListener("click", () => state.selected && restartNode(state.selected.id));
 $("add-task").addEventListener("click", () => openTaskDialog());
+$("copy-tasks").addEventListener("click", openCopyDialog);
+$("copy-source-node").addEventListener("change", (event) => loadCopySourceConfigs(event.target.value));
+$("copy-select-all").addEventListener("change", () => {
+  document.querySelectorAll("#copy-configs input[data-copy-index]").forEach((input) => { input.checked = $("copy-select-all").checked; });
+});
+$("copy-form").addEventListener("submit", copyTasks);
+$("copy-close").addEventListener("click", closeCopyDialog);
+$("copy-cancel").addEventListener("click", closeCopyDialog);
 $("task-form").addEventListener("submit", saveTask);
 $("task-close").addEventListener("click", closeTaskDialog);
 $("task-cancel").addEventListener("click", closeTaskDialog);
