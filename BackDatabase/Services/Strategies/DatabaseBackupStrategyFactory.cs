@@ -48,8 +48,9 @@ public sealed class DatabaseBackupStrategyFactory
     /// </summary>
     public static DatabaseBackupStrategyFactory CreateDefault()
     {
+        var mysqlDumpDetector = new MySqlDumpClientDetector();
         return new DatabaseBackupStrategyFactory()
-            .Register(new MySqlBackupStrategy())
+            .Register(new MySqlBackupStrategy(mysqlDumpDetector))
             .Register(new PgSqlBackupStrategy());
         // 示例：以后加 SQL Server
         // .Register(new SqlServerBackupStrategy());

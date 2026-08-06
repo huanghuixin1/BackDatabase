@@ -2,5 +2,5 @@ namespace BackDatabase;
 
 internal static class AppInfo
 {
-    public const string Version = "2.2";
+    public const string Version = "2.5";
 }
