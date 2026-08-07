@@ -38,6 +38,23 @@ public sealed class BackNodeClient
 
     public Task<NodeResponse> RestartAsync(BackNode node, CancellationToken cancellationToken = default) =>
         SendAsync(node, HttpMethod.Post, "/api/restart", null, cancellationToken);
+    public async Task<NodeResponse> UploadUpdateAsync(BackNode node, Stream package, string fileName, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(node.WebPassword))
+            throw new InvalidOperationException("节点未配置 webPassword。");
+
+        var token = await GetTokenAsync(node, cancellationToken);
+        using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
+        using var content = new MultipartFormDataContent();
+        var file = new StreamContent(package);
+        file.Headers.ContentType = new MediaTypeHeaderValue("application/zip");
+        content.Add(file, "file", Path.GetFileName(fileName));
+        using var request = new HttpRequestMessage(HttpMethod.Post, node.BaseUrl + "/api/update") { Content = content };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        return new NodeResponse((int)response.StatusCode, body, response.Content.Headers.ContentType?.ToString() ?? "application/json");
+    }
 
     private async Task<NodeResponse> SendAsync(BackNode node, HttpMethod method, string path, JsonElement? body, CancellationToken cancellationToken)
     {

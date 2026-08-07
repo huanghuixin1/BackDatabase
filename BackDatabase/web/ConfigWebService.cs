@@ -11,6 +11,7 @@ using HxSimpleWebAuth;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 
 
 namespace BackDatabase.Web;
@@ -299,6 +300,31 @@ public static partial class ConfigWebService
             environmentRestartRequired = true,
         }));
 
+        app.MapPost("/api/update", async (HttpRequest request, CancellationToken cancellationToken) =>
+        {
+            if (!request.HasFormContentType)
+                return Results.BadRequest(new { message = "请使用 multipart/form-data 上传 zip 更新包。" });
+            var sizeFeature = request.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
+            if (sizeFeature is { IsReadOnly: false }) sizeFeature.MaxRequestBodySize = 500L * 1024 * 1024;
+            var form = await request.ReadFormAsync(new FormOptions { MultipartBodyLengthLimit = 500L * 1024 * 1024 }, cancellationToken);
+            var file = form.Files.GetFile("file");
+            if (file is null)
+                return Results.BadRequest(new { message = "缺少更新包文件。" });
+            try
+            {
+                await UpdateInstaller.StageAndLaunchAsync(baseDir, file, cancellationToken);
+                _ = Task.Run(async () => { await Task.Delay(500); Environment.Exit(0); });
+                return Results.Ok(new { message = "更新包已接收，节点正在覆盖更新并重启。" });
+            }
+            catch (InvalidDataException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                return Results.Problem($"准备更新失败: {ex.Message}", statusCode: 500);
+            }
+        });
         // 重启服务：本机回环 + 已登录后才能到达（中间件已拦 /api）。后台拉起新进程后退出当前进程。
         app.MapPost("/api/restart", () =>
         {

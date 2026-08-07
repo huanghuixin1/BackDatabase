@@ -26,6 +26,7 @@
       <nav>
         <button class="nav-item active" data-scroll="overview">节点概览</button>
         <button id="nav-add-node" class="nav-item">添加节点</button>
+        <button class="nav-item" data-scroll="updates">程序更新</button>
       </nav>
       <button id="logout-button" class="sidebar-action">退出登录</button>
     </aside>
@@ -49,6 +50,18 @@
         <div id="node-empty" class="empty hidden">还没有节点，先添加一台 BackDatabase。</div>
       </section>
 
+      <section id="updates" class="section">
+        <div class="topbar"><div><div class="eyebrow">PROGRAM UPDATE</div><h2>程序更新</h2></div></div>
+        <div class="metric-card update-panel">
+          <label>上传 BackDatabase 发布包（zip）<input id="update-file" type="file" accept=".zip,application/zip"></label>
+          <button id="update-upload" class="primary" type="button">上传程序包</button>
+          <select id="update-package"><option value="">请选择已上传的程序包</option></select>
+          <div id="update-packages" class="muted"></div>
+          <h4>选择更新节点</h4><div id="update-nodes" class="node-grid compact-grid"></div>
+          <button id="update-deploy" class="warning" type="button">覆盖更新选中节点</button>
+          <pre id="update-result" class="code-block"></pre>
+        </div>
+      </section>
       <section id="node-console" class="node-console hidden" aria-label="Node console">
         <div class="node-console-bar">
           <div id="node-tabs" class="node-tabs" role="tablist" aria-label="Open nodes"></div>

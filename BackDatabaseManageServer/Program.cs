@@ -6,6 +6,7 @@ using BackDatabaseManageServer.Services;
 using HxSimpleWebAuth;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.FileProviders;
 
 var baseDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -260,6 +261,65 @@ app.MapPost("/api/nodes/{targetId:guid}/configs/copy", async (Guid targetId, Cop
     }
 });
 
+var updatesDirectory = Path.Combine(baseDirectory, "updates");
+Directory.CreateDirectory(updatesDirectory);
+
+app.MapGet("/api/updates", () => Results.Ok(new DirectoryInfo(updatesDirectory)
+    .EnumerateFiles("*.zip", SearchOption.TopDirectoryOnly)
+    .OrderByDescending(file => file.LastWriteTimeUtc)
+    .Select(file => new { name = file.Name, size = file.Length, uploadedAtUtc = file.LastWriteTimeUtc })));
+
+app.MapPost("/api/updates/upload", async (HttpRequest request, CancellationToken cancellationToken) =>
+{
+    if (!request.HasFormContentType)
+        return Results.BadRequest(new { message = "请使用 multipart/form-data 上传 zip 文件。" });
+    var sizeFeature = request.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
+    if (sizeFeature is { IsReadOnly: false }) sizeFeature.MaxRequestBodySize = 500L * 1024 * 1024;
+    var form = await request.ReadFormAsync(new FormOptions { MultipartBodyLengthLimit = 500L * 1024 * 1024 }, cancellationToken);
+    var file = form.Files.GetFile("file");
+    if (file is null || file.Length == 0)
+        return Results.BadRequest(new { message = "请选择更新包。" });
+    if (file.Length > 500L * 1024 * 1024)
+        return Results.BadRequest(new { message = "更新包不能超过 500MB。" });
+    var fileName = Path.GetFileName(file.FileName);
+    if (!string.Equals(Path.GetExtension(fileName), ".zip", StringComparison.OrdinalIgnoreCase))
+        return Results.BadRequest(new { message = "更新包必须是 zip 文件。" });
+    if (string.IsNullOrWhiteSpace(fileName))
+        fileName = $"back-update-{DateTime.UtcNow:yyyyMMddHHmmss}.zip";
+    var target = Path.Combine(updatesDirectory, fileName);
+    await using var output = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None);
+    await file.CopyToAsync(output, cancellationToken);
+    return Results.Ok(new { name = fileName, size = file.Length, uploadedAtUtc = DateTime.UtcNow });
+});
+
+app.MapPost("/api/updates/deploy", async (UpdateDeployRequest request, BackNodeClient client, CancellationToken cancellationToken) =>
+{
+    var packageName = Path.GetFileName(request.PackageName ?? "");
+    var packagePath = Path.Combine(updatesDirectory, packageName);
+    if (string.IsNullOrWhiteSpace(packageName) || !File.Exists(packagePath))
+        return Results.NotFound(new { message = "更新包不存在。" });
+    if (request.NodeIds is null || request.NodeIds.Count == 0)
+        return Results.BadRequest(new { message = "请至少选择一个节点。" });
+
+    var results = new List<object>();
+    foreach (var nodeId in request.NodeIds.Distinct())
+    {
+        var node = nodeStore.Find(nodeId);
+        if (node is null) { results.Add(new { nodeId, success = false, message = "节点不存在。" }); continue; }
+        if (!node.Enabled) { results.Add(new { nodeId, nodeName = node.Name, success = false, message = "节点已禁用。" }); continue; }
+        try
+        {
+            await using var stream = File.OpenRead(packagePath);
+            var response = await client.UploadUpdateAsync(node, stream, packageName, cancellationToken);
+            results.Add(new { nodeId, nodeName = node.Name, success = response.StatusCode is >= 200 and < 300, message = response.Content });
+        }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or IOException)
+        {
+            results.Add(new { nodeId, nodeName = node.Name, success = false, message = ex.Message });
+        }
+    }
+    return Results.Ok(new { packageName, results });
+});
 app.Run("http://0.0.0.0:5090");
 
 static BackNodeView ToView(BackNode node, NodeOnlineState? onlineState = null) => new()
@@ -416,3 +476,5 @@ static partial class CopyHelpers
         dbMaxFiles = config.DbMaxFiles,
     });
 }
+
+public sealed record UpdateDeployRequest(string? PackageName, List<Guid>? NodeIds);

@@ -8,7 +8,7 @@ const $ = (id) => document.getElementById(id);
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   headers.set("Accept", "application/json");
-  if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
   const response = await fetch(path, { ...options, headers });
   let body = {};
@@ -52,11 +52,13 @@ function showApp() {
   $("login-view").classList.add("hidden");
   $("app").classList.remove("hidden");
   startOnlineRefresh();
+  loadUpdatePackages().catch((error) => console.warn("加载更新包失败", error));
 }
 
 async function loadNodes() {
   state.nodes = await api("/api/nodes");
   renderNodes();
+  if ($("update-nodes")) renderUpdateNodes();
 }
 
 function renderNodes() {
@@ -558,6 +560,43 @@ function showToast(message, error = false) {
 
 function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char])); }
 
+async function loadUpdatePackages() {
+  const packages = await api("/api/updates");
+  const select = $("update-package");
+  const current = select.value;
+  select.innerHTML = '<option value="">请选择已上传的程序包</option>' + packages.map(item => `<option value="${escapeHtml(item.name)}">${escapeHtml(item.name)} (${Math.round(item.size / 1024 / 1024 * 10) / 10} MB)</option>`).join("");
+  if (packages.some(item => item.name === current)) select.value = current;
+  $("update-packages").textContent = packages.length ? `已上传 ${packages.length} 个程序包` : "暂无程序包";
+}
+
+function renderUpdateNodes() {
+  $("update-nodes").innerHTML = state.nodes.map(node => `<label class="check"><input type="checkbox" data-update-node="${node.id}" ${node.enabled ? "" : "disabled"}> ${escapeHtml(node.name)} ${node.version ? `(v${escapeHtml(node.version)})` : ""}</label>`).join("");
+}
+
+async function uploadUpdatePackage() {
+  const file = $("update-file").files[0];
+  if (!file) return showToast("请选择 zip 更新包", true);
+  const form = new FormData(); form.append("file", file);
+  const button = $("update-upload"); button.disabled = true; button.textContent = "上传中…";
+  try {
+    const result = await api("/api/updates/upload", { method: "POST", body: form });
+    await loadUpdatePackages(); $("update-package").value = result.name; showToast("程序包上传成功");
+  } catch (error) { showToast(error.message, true); }
+  finally { button.disabled = false; button.textContent = "上传程序包"; }
+}
+
+async function deployUpdatePackage() {
+  const packageName = $("update-package").value;
+  const nodeIds = [...document.querySelectorAll("#update-nodes input[data-update-node]:checked")].map(input => input.dataset.updateNode);
+  if (!packageName) return showToast("请先选择程序包", true);
+  if (!nodeIds.length) return showToast("请至少选择一个节点", true);
+  const button = $("update-deploy"); button.disabled = true; button.textContent = "更新中…"; $("update-result").textContent = "正在逐个节点更新，请稍候…";
+  try {
+    const result = await api("/api/updates/deploy", { method: "POST", body: JSON.stringify({ packageName, nodeIds }) });
+    $("update-result").textContent = JSON.stringify(result.results, null, 2); await loadNodes(); showToast("更新请求已完成");
+  } catch (error) { $("update-result").textContent = error.message; showToast(error.message, true); }
+  finally { button.disabled = false; button.textContent = "覆盖更新选中节点"; }
+}
 $("login-form").addEventListener("submit", async (event) => {
   event.preventDefault(); $("login-message").textContent = "";
   const password = $("login-password").value;
@@ -579,6 +618,8 @@ $("remember-password").addEventListener("change", () => {
 
 $("logout-button").addEventListener("click", async () => { try { await api("/api/auth/logout", { method: "POST" }); } catch { } state.token = null; sessionStorage.removeItem(TOKEN_KEY); showLogin(); });
 $("refresh-button").addEventListener("click", (event) => refreshAllNodes(event.currentTarget));
+$("update-upload").addEventListener("click", uploadUpdatePackage);
+$("update-deploy").addEventListener("click", deployUpdatePackage);
 $("add-node-button").addEventListener("click", openNodeDialog);
 $("nav-add-node").addEventListener("click", openNodeDialog);
 $("node-form").addEventListener("submit", addNode);
