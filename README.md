@@ -1,158 +1,189 @@
-<img width="1086" height="731" alt="image" src="https://github.com/user-attachments/assets/5470ebe0-58a0-41e6-8051-cc1cf4d00fee" />
+<img width="1086" height="731" alt="BackDatabase 管理界面" src="https://github.com/user-attachments/assets/5470ebe0-58a0-41e6-8051-cc1cf4d00fee" />
 
 # BackDatabase
 
-通过调用本机 `mysqldump` / `pg_dump`，按 `config/*.conf` 定时导出 SQL，并自动清理超出数量的旧备份。
+BackDatabase 是一个基于 .NET 10 的数据库备份系统，包含实际执行备份的 back 节点和集中管理多个节点的 server 管理端。
 
-## 依赖
-- MySQL/MariaDB：安装客户端并保证 **`mysqldump` 在 PATH**
-- PostgreSQL：安装客户端并保证 **`pg_dump` 在 PATH** （也就是环境变量）
+## 项目组成
 
-Ubuntu/Debian：
+| 项目 | 作用 | 默认地址 |
+| --- | --- | --- |
+| `BackDatabase` | back 节点：执行备份，提供节点 Web 控制台和 API | `http://节点地址:5080` |
+| `BackDatabaseManageServer` | server：管理多个 back 节点、任务和程序更新包 | `http://server地址:5090` |
+
+```text
+BackDatabase.slnx
+BackDatabase/                 # back 节点
+BackDatabaseManageServer/     # server 管理端
+libs/                         # 构建所需 DLL
+.github/workflows/dotnet.yml  # GitHub Actions
+```
+
+## 功能
+
+- 支持 MySQL、MariaDB、PostgreSQL 备份。
+- 支持按分钟间隔或每天固定 UTC 时刻执行备份。
+- 支持任务级和数据库级备份计划。
+- 支持每个数据库单独设置最大保留文件数量。
+- back 提供 Kestrel Web 控制台，用于维护备份任务、查看运行状态和备份文件。
+- server 集中查看节点版本和在线状态，可手动刷新节点。
+- server 可同时打开多个节点控制台，并可复制备份任务。
+- server 可上传 zip 发布包并覆盖更新选中的节点。
+
+## 前置条件
+
+### .NET SDK
+
+项目目标框架为 `.NET 10`，构建和开发环境必须安装 .NET SDK 10。
+
+### 数据库客户端
+
+back 通过本地命令行工具执行备份，必须将对应工具加入 `PATH`：
+
+| 数据库 | 工具 |
+| --- | --- |
+| MySQL / MariaDB | `mysqldump` |
+| PostgreSQL | `pg_dump` |
+
+Linux 示例：
 
 ```bash
-apt install mysql-client
-# 或 postgresql-client-xx
+apt update
+apt install -y mysql-client
+# PostgreSQL 请安装对应版本的 postgresql-client
 ```
 
-Windows：将 `mysqldump.exe` / `pg_dump.exe` 所在目录加入环境变量。
+Windows 请将 `mysqldump.exe` 或 `pg_dump.exe` 所在目录加入系统 `PATH`，然后重启 back。
 
-### 安装.net 10
+## 构建与发布
+
+`libs/` 已包含项目需要的本地 DLL，不依赖开发机上其它项目的目录。
+
 ```bash
-wget https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb -O packages-microsoft-prod.deb
-dpkg -i packages-microsoft-prod.deb
-rm packages-microsoft-prod.deb
-
-apt-get update
-apt-get install -y dotnet-sdk-10.0
+dotnet restore BackDatabase.slnx
+dotnet build BackDatabase.slnx --configuration Release --no-restore
 ```
 
-## 目录结构
+发布 back：
 
-```
-BackDatabase/
-  Program.cs
-  env.conf.example        # 全局环境配置样例（复制为 env.conf）
-  Models/                 # 配置模型
-    BackupConfig.cs
-    ConfigLoader.cs
-    EnvConfig.cs
-  Utils/
-    EnvConfigLoader.cs    # 加载 env.conf
-  Services/
-    BackupRunner.cs       # 调用 dump 工具、裁剪旧文件
-    BackupScheduler.cs    # 间隔 / 每日 UTC 调度
-    PushNotifier.cs       # 备份失败时 HxPush 推送
-  web/                    # Kestrel 配置管理页面与 API
-  config/
-    52hhx.com.conf.example
+```bash
+dotnet publish BackDatabase/BackDatabase.csproj --configuration Release --output publish/back
 ```
 
-启动时：
+发布 server：
 
-1. 读取 **可执行文件目录下** 的 `env.conf`（JSON，可选；不存在则推送关闭）
-2. 扫描同目录 `config/*.conf`（仅 `.conf`，`.example` 不加载）
-3. 启动本机 Kestrel 管理界面：`http://127.0.0.1:5080`
+```bash
+dotnet publish BackDatabaseManageServer/BackDatabaseManageServer.csproj --configuration Release --output publish/server
+```
 
-页面可维护 `config/*.conf` 备份配置及 `env.conf` 推送配置。备份任务新增、修改、删除和恢复后立即生效；`env.conf` 中的推送与访问口令变更仍需重启。
+发布目录必须保留程序依赖文件、`web/`、`config/` 和 `env.conf.example`。
 
-## 全局环境配置 `env.conf`
+## Back 节点配置
 
-复制 `env.conf.example` 为 `env.conf` 后填写：
+back 默认监听 `http://0.0.0.0:5080`。首次部署时，在发布目录中复制 `env.conf.example` 为 `env.conf`：
 
 ```json
 {
   "pushAddr": "http://127.0.0.1:5212",
   "pushKey": "your-app-key",
   "pushHwid": "",
-  "pushGroup": "backDb"
+  "pushGroup": "backDb",
+  "webPassword": "change-this-password"
 }
 ```
 
+`webPassword` 保护节点 Web 控制台与 API；未配置密码时，API 仅允许本机回环地址访问。
+
+备份任务保存在发布目录的 `config/*.conf`，也可以直接在 back Web 控制台创建和编辑。
+
 | 字段 | 说明 |
-|---|---|
-| `pushAddr` | HxPush 服务地址（支持 `http(s)://` 或 `ws(s)://.../ws`，SDK 会规范为 HTTP 根） |
-| `pushKey` | 已在 HxPush 服务端登记的 AppKey |
-| `pushHwid` | 可选设备 ID；为空时回退为本机机器名，再回退为 `BackDatabase` |
-| `pushGroup` | 可选消息分组，对应 SDK 的 `MsgGroup`；为空时为 `default` |
+| --- | --- |
+| `dbType` | `mysql`、`mariadb` 或 `pgsql` |
+| `backtime` | 分钟间隔，例如 `60`；或每天 UTC 时刻，例如 `02:30` |
+| `host` / `port` / `user` / `pwd` | 数据库连接信息 |
+| `dbs` | 逗号分隔的数据库名称 |
+| `savedir` | 相对程序目录的备份路径，例如 `/backup/` |
+| `maxfiles` | 任务默认最大保留文件数量 |
+| `dbmaxfiles` | 可选的每库保留数量，例如 `app:30,analytics:90` |
 
-`pushAddr` 与 `pushKey` 都非空时启用推送；备份**最终失败**（含一次自动重试后仍失败）时推送一条消息。推送异常只记日志，不影响备份主流程。
-
-依赖本机旁的 `HxPushSdk` 工程（`D:\code\HxPush\HxPushSdk`）。
-
-### 裁剪发布说明（半裁剪）
-
-勾选「裁剪未使用的代码」时工程已按中间方案配置：
-
-- `TrimMode=partial` + `JsonSerializerIsReflectionEnabledByDefault=true`：体积缩小，仍允许反射 JSON  
-- `TrimmerRootAssembly`：`HxPushSdk` / `HxPushModel` 元数据保留  
-- 本项目 `env.conf` 走源生成；推送 SDK 注入「源生成 + 反射回退」的 `JsonSerializerOptions`
-
-重新发布后请把 `env.conf` 放到 **发布目录**（不是源码目录）。
-
-## 配置（兼容原 Go 版）
-
-| 键 | 说明 |
-|---|---|
-| `dbType` | `mysql` 或 `pgsql`（MariaDB 填 `mysql`） |
-| `backtime` | 数字 = 每隔 N 分钟；`HH:mm` = 每天该 **UTC** 时刻 |
-| `host` / `port` / `user` / `pwd` | 连接信息 |
-| `dbs` | 逗号分隔数据库名 |
-| `savedir` | 相对程序目录的保存路径，如 `/backup/` |
-| `maxfiles` | 最大保留文件数，默认 180 |
-| `dbmaxfiles` | 可选，每库最大保留文件数，例如 `app:30,analytics:90`；未列出的库沿用 `maxfiles` |
-
-示例 `config/local.conf`：
+示例：
 
 ```ini
 dbType=mysql
-backtime=2
-port=3306
+backtime=60
 host=127.0.0.1
-dbs=ss,hhx
+port=3306
 user=root
-pwd=pwd
+pwd=your-password
+dbs=app,analytics
 savedir=/backup/
-maxfiles=50
-dbmaxfiles=ss:30,hhx:90
+maxfiles=90
+dbmaxfiles=app:30,analytics:60
 ```
 
-每日固定时刻：
+保存、修改、删除或恢复备份任务后立即生效。修改 `env.conf` 中的推送或 Web 密码后，需要重启 back。
 
-```ini
-backtime=02:30
-```
+### 运行 back
 
-## 运行
-
-```powershell
-cd D:\code\BackDatabase\BackDatabase
-copy config\52hhx.com.conf.example config\local.conf
-# 编辑 local.conf 后：
-dotnet run
-# 发布
-dotnet publish -c Release -o publish
-```
-
-发布目录必须保留自动复制的 `web/` 文件夹；浏览器访问 `http://127.0.0.1:5080` 打开配置中心。
-
-Linux 后台：
+Linux 发布目录包含 `backdatabase.sh`：
 
 ```bash
 chmod +x backdatabase.sh
 ./backdatabase.sh start
-# 可用：./backdatabase.sh stop | restart | status
+./backdatabase.sh status
+./backdatabase.sh restart
+./backdatabase.sh stop
 ```
 
-备份任务配置保存后立即生效；修改 `env.conf` 后需**重启程序**。
+Windows 可直接启动 `BackDatabase.exe`，或执行：
 
-## 行为说明
+```powershell
+dotnet BackDatabase.dll
+```
 
-- 每个 `.conf` 一个后台任务（并行）
-- 间隔模式：立即备份一次，再按分钟睡眠（对齐原 Go）
-- 每日模式：约 40 秒轮询 UTC 时分，同一天只跑一次
-- 每个数据库分别按修改时间清理旧文件；`dbmaxfiles` 优先，未单独配置时沿用 `maxfiles`，不同数据库之间不会互相挤占名额
-- 失败删除残缺 SQL 后自动重试一次
-- 备份最终失败时可通过 `env.conf` + HxPush 推送告警
-- 支持 Ctrl+C 优雅退出
+## Server 管理端
 
+server 默认监听 `http://0.0.0.0:5090`。首次部署时，在发布目录中复制 `env.conf.example` 为 `env.conf`：
+
+```json
+{
+  "webPassword": "change-this-password"
+}
+```
+
+在 server 中添加节点时，填写节点名称、back 控制地址（例如 `http://10.0.0.10:5080`）及该节点的 `webPassword`。server 通过 back HTTP API 管理节点，不直接读取节点磁盘。
+
+## 在线更新
+
+1. 为目标操作系统发布 back，并压缩发布目录为 `.zip`。
+2. 在 server 的“程序更新”页面上传包。
+3. 选择节点并执行覆盖更新。
+
+更新过程会保护节点现有的 `config/`、`env.conf`、SQL 备份、日志、PID 和更新临时目录。Windows 更新日志为发布目录中的 `update.log`。
+
+更新包必须与节点系统和运行时匹配，例如：
+
+```text
+BackDatabase-3.1.0-win-x64.zip
+BackDatabase-3.1.0-linux-x64.zip
+```
+
+不要将 Windows 更新包部署到 Linux 节点，或将 Linux 更新包部署到 Windows 节点。
+
+## GitHub Actions
+
+`.github/workflows/dotnet.yml` 在 `main` 分支推送和 Pull Request 时执行：
+
+```bash
+dotnet restore BackDatabase.slnx
+dotnet build BackDatabase.slnx --configuration Release --no-restore
+```
+
+当前解决方案没有测试项目，因此 workflow 仅执行还原与构建。
+
+## 安全建议
+
+- `env.conf` 含有密码，已被 `.gitignore` 忽略，只提交 `env.conf.example`。
+- 为 back 和 server 分别设置高强度 `webPassword`。
+- 不要将 5080 或 5090 端口直接暴露到不受信任网络。
+- 仅允许受信任管理员上传和部署更新包。
