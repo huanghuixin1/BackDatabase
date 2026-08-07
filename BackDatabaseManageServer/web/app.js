@@ -566,13 +566,23 @@ async function loadUpdatePackages() {
   const current = select.value;
   select.innerHTML = '<option value="">请选择已上传的程序包</option>' + packages.map(item => `<option value="${escapeHtml(item.name)}">${escapeHtml(item.name)} (${Math.round(item.size / 1024 / 1024 * 10) / 10} MB)</option>`).join("");
   if (packages.some(item => item.name === current)) select.value = current;
-  $("update-packages").textContent = packages.length ? `已上传 ${packages.length} 个程序包` : "暂无程序包";
+  $("update-packages").innerHTML = packages.length
+    ? `<div class="update-package-count">已上传 ${packages.length} 个程序包</div>${packages.map(item => `<div class="update-package-row"><span>${escapeHtml(item.name)}</span><button type="button" class="danger-link" data-update-delete="${escapeHtml(item.name)}">删除</button></div>`).join("")}`
+    : "暂无程序包";
 }
 
 function renderUpdateNodes() {
   $("update-nodes").innerHTML = state.nodes.map(node => `<label class="check"><input type="checkbox" data-update-node="${node.id}" ${node.enabled ? "" : "disabled"}> ${escapeHtml(node.name)} ${node.version ? `(v${escapeHtml(node.version)})` : ""}</label>`).join("");
 }
 
+async function deleteUpdatePackage(name) {
+  if (!confirm(`确定删除已上传的程序包“${name}”吗？`)) return;
+  try {
+    await api(`/api/updates/${encodeURIComponent(name)}`, { method: "DELETE" });
+    await loadUpdatePackages();
+    showToast("更新包已删除");
+  } catch (error) { showToast(error.message, true); }
+}
 async function uploadUpdatePackage() {
   const file = $("update-file").files[0];
   if (!file) return showToast("请选择 zip 更新包", true);
@@ -620,6 +630,10 @@ $("logout-button").addEventListener("click", async () => { try { await api("/api
 $("refresh-button").addEventListener("click", (event) => refreshAllNodes(event.currentTarget));
 $("update-upload").addEventListener("click", uploadUpdatePackage);
 $("update-deploy").addEventListener("click", deployUpdatePackage);
+$("update-packages").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-update-delete]");
+  if (button) deleteUpdatePackage(button.dataset.updateDelete);
+});
 $("add-node-button").addEventListener("click", openNodeDialog);
 $("nav-add-node").addEventListener("click", openNodeDialog);
 $("node-form").addEventListener("submit", addNode);

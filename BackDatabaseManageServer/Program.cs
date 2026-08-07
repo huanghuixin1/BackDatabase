@@ -269,6 +269,31 @@ app.MapGet("/api/updates", () => Results.Ok(new DirectoryInfo(updatesDirectory)
     .OrderByDescending(file => file.LastWriteTimeUtc)
     .Select(file => new { name = file.Name, size = file.Length, uploadedAtUtc = file.LastWriteTimeUtc })));
 
+app.MapDelete("/api/updates/{packageName}", (string packageName) =>
+{
+    var safeName = Path.GetFileName(packageName);
+    if (string.IsNullOrWhiteSpace(safeName)
+        || !string.Equals(safeName, packageName, StringComparison.Ordinal)
+        || !string.Equals(Path.GetExtension(safeName), ".zip", StringComparison.OrdinalIgnoreCase))
+        return Results.BadRequest(new { message = "无效的更新包名称。" });
+
+    var path = Path.Combine(updatesDirectory, safeName);
+    if (!File.Exists(path))
+        return Results.NotFound(new { message = "更新包不存在。" });
+    try
+    {
+        File.Delete(path);
+        return Results.Ok(new { message = "更新包已删除。", name = safeName });
+    }
+    catch (IOException ex)
+    {
+        return Results.Problem($"删除更新包失败: {ex.Message}", statusCode: 500);
+    }
+    catch (UnauthorizedAccessException ex)
+    {
+        return Results.Problem($"删除更新包失败: {ex.Message}", statusCode: 500);
+    }
+});
 app.MapPost("/api/updates/upload", async (HttpRequest request, CancellationToken cancellationToken) =>
 {
     if (!request.HasFormContentType)

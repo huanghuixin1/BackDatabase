@@ -121,3 +121,6 @@ dialog::backdrop { background:rgba(20,39,31,.4); }
 .compact-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
 .compact-grid .check { padding:10px 12px; border:1px solid var(--border); background:#fff; }
 @media (max-width:700px) { .compact-grid { grid-template-columns:1fr; } }
+.update-package-count { margin-bottom:6px; }
+#update-packages { max-height:260px; overflow-y:auto; padding-right:4px; }
+.update-package-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid var(--border); }
